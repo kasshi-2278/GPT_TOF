@@ -1,0 +1,18 @@
+{
+  "source_sha256": "2977f1ba98c4d0ae740174d5fde2ab18f323e50cdca9ece5f066fff0dc2a1702",
+  "selected_candidate": 14,
+  "variants": 24,
+  "nominal_three_lap_time_s": 395.417102,
+  "nominal_lap_times_s": [
+    131.270712,
+    132.046786,
+    132.099603
+  ],
+  "completion_tests": 2,
+  "tests": 10,
+  "collisions": 0,
+  "danger_events": 6,
+  "same_as_previous": true,
+  "improved_speed_demonstrated": false,
+  "map_sha256": "967823ce9823a277895533cc1af7cb6e7c5587b299bea3e069063815a773e8de"
+}

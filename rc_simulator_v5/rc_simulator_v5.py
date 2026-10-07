@@ -61,7 +61,7 @@ class App:
         self.font=(self.family,10); self.smallfont=(self.family,9)
         self.map_path=Path(map_path)
         self.sim=Simulation(World.load(self.map_path))
-        self.sim.load_program(ROOT/'examples'/'sonic_drive_three_laps.py')
+        self.sim.load_program(ROOT/'examples'/'sonic_drive_follow_gap.py')
         self.closed=False; self.pending_steps=0; self.log_window=None
         self.vehicle_view=None; self.lap_timer=LapTimer(self.sim,3); self.sonar_map=SonarMap()
         self.camera=Camera(); self.running=False; self.accumulator=0.0
@@ -75,7 +75,7 @@ class App:
         self.mode_var=tk.StringVar(value=list(MODES)[0])
         self.rate_var=tk.StringVar(value='1.0')
         self.interface_var=tk.StringVar(value='自動判定')
-        self.program_var=tk.StringVar(value='sonic_drive_three_laps.py  |  関数 / Controller')
+        self.program_var=tk.StringVar(value='sonic_drive_follow_gap.py  |  関数 / Controller')
         self.spawn_var=tk.StringVar(value='デモ開始')
         self.notice=tk.StringVar(value='ホイール：拡大縮小  /  右ドラッグ：移動  /  F：全体  /  Space：開始・停止')
         self.vars={}

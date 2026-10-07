@@ -20,6 +20,17 @@ def sensor_segments(config,readings,display_range=150):
     return result
 
 
+def gap_sector(state):
+    """Decode actual controller output; old programs have no synthetic sector."""
+    if '安全停止' in str(state):return None
+    low=re.search(r'\| gap_min_deg=([-+0-9.]+)',str(state))
+    high=re.search(r'\| gap_max_deg=([-+0-9.]+)',str(state))
+    if not low or not high:return None
+    try:a,b=float(low.group(1)),float(high.group(1))
+    except ValueError:return None
+    return (a,b) if -60<=a<=b<=60 else None
+
+
 class VehicleView:
     def __init__(self,app):
         tk=app.tk;ttk=app.ttk
@@ -77,6 +88,12 @@ class VehicleView:
         w=max(1,cv.winfo_width());h=max(1,cv.winfo_height())
         origin=(w/2,h*.68);scale=min(w*.43/150,h*.58/150)
         def screen(p):return origin[0]-p[1]*scale,origin[1]-p[0]*scale
+        sector=gap_sector(sim.state)
+        if sector is not None:
+            a,b=sector
+            angles=[a+(b-a)*i/24 for i in range(25)]
+            points=[screen((0,0))]+[screen((85*math.cos(math.radians(v)),85*math.sin(math.radians(v)))) for v in angles]
+            cv.create_polygon(*[v for p in points for v in p],fill='#244b3c',outline='#418a64')
         for radius in (50,100,150):
             r=radius*scale
             cv.create_oval(origin[0]-r,origin[1]-r,origin[0]+r,origin[1]+r,
@@ -96,7 +113,7 @@ class VehicleView:
         self.draw_decision(cv,sim,screen)
         cv.create_text(w/2,h-20,text='　 /　 '.join(f'{LABELS[n]} {sim.sensors.get(n,0):.1f}' for n in COLORS),
                        fill='white',font=(self.app.family,10))
-        self.note.set('色の線：５つの測距値（150cmまで）　緑：判断した目標方向　白点線：操舵指令の曲率')
+        self.note.set('色の線：５つの測距値（150cmまで）　緑矢印：目標方向　緑の帯：FTG選択領域（未観測部分あり）　白点線：操舵指令')
 
     def clear_map(self):
         self.app.sonar_map.clear();self.cache=None
