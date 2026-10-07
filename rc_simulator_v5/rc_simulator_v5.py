@@ -134,7 +134,7 @@ class App:
         self._button(pybar,'再読込',self.reload_python)
         self._button(pybar,'Python停止',self.stop_python)
         self._button(pybar,'実行ログ',self.show_program_log)
-        self._button(pybar,'車視点 V',self.show_vehicle_view)
+        self._button(pybar,'超音波・判断 V',self.show_vehicle_view)
         interface=ttk.Combobox(pybar,textvariable=self.interface_var,values=list(INTERFACES),state='readonly',width=22)
         interface.pack(side='left',padx=6)
         interface.bind('<<ComboboxSelected>>',lambda e:self.interface_changed())
@@ -487,7 +487,7 @@ class App:
         v['commands'].set(f'Accel {c.accel:+6.1f}     Handle {c.handle:+6.1f}')
         v['motion'].set(f'速度 {c.speed:5.1f} cm/s   操舵 {c.steer:+5.1f}°')
         t,p=c.pwm(); v['pwm'].set(f'PWM : throttle {t}  /  steer {p}')
-        v['state'].set(s.state)
+        v['state'].set(str(s.state).split(' | target_deg=')[0])
         spec=s.program_spec
         if s.mode=='program' and spec:
             label='実車互換 GPIO/PWM' if spec.interface=='legacy' else '関数 / Controller'

@@ -7,7 +7,7 @@ The original conservative corner and fault handling remains the fallback.
 """
 import math
 
-BASE_PARAMS = {'filter_s': 0.08, 'target_cm': 44, 'angle_gain': 3, 'distance_gain': 1.2, 'fit_angle_limit': 55, 'gap_handle': 8, 'side_gain': 0, 'side_buffer': 25, 'diag_gain': 0, 'diag_buffer': 50, 'turn_start': 150, 'turn_release': 185, 'min_turn_s': 0.6, 'turn_handle': 100, 'protect_diag': 25, 'near_turn_limit': 100, 'emergency_front': 16, 'emergency_diag': 12, 'emergency_side': 8, 'deadband': 2, 'steer_rate': 140, 'turn_slowdown': 0.5, 'slow_distance': 100, 'base_accel': 35, 'decel_rate': 100, 'accel_rate': 20, 'mode': 'original', 'center_gain': 0.05, 'small_turn': 25}
+BASE_PARAMS = {'filter_s': 0.08, 'target_cm': 44, 'angle_gain': 3, 'distance_gain': 1.2, 'fit_angle_limit': 55, 'gap_handle': 8, 'side_gain': 0, 'side_buffer': 25, 'diag_gain': 0, 'diag_buffer': 50, 'turn_start': 180, 'turn_release': 215, 'min_turn_s': 0.6, 'turn_handle': 100, 'protect_diag': 25, 'near_turn_limit': 100, 'emergency_front': 16, 'emergency_diag': 12, 'emergency_side': 8, 'deadband': 2, 'steer_rate': 140, 'turn_slowdown': 0.5, 'slow_distance': 100, 'base_accel': 35, 'decel_rate': 100, 'accel_rate': 20, 'mode': 'original', 'center_gain': 0.05, 'small_turn': 25}
 
 def clamp(x,a,b):
     return max(a,min(b,x))
@@ -137,21 +137,11 @@ class DividerController(PreviousController):
         self.guard_trust_deg=15.0
         self.guard_confirm_s=.25
         self.recent_diagonal=[250.0,250.0]
-        self.startup_echoes=[]
-        self.stable_echoes=False
 
     def step(self,sensors,dt):
         previous_handle=self.handle
         names=('Fr','FrLh','RrLh','FrRh','RrRh')
         valid=all(isinstance(sensors.get(n),(int,float)) and math.isfinite(sensors[n]) and 0<sensors[n]<=450 for n in names)
-        if valid and len(self.startup_echoes)<6:
-            self.startup_echoes.append([sensors[n] for n in names])
-            if len(self.startup_echoes)==6:
-                # Initial low-speed measurement qualification, in centimetres.
-                # Discontinuous or noisy echoes keep the conservative policy.
-                residuals=[abs(self.startup_echoes[i][j]-2*self.startup_echoes[i-1][j]+self.startup_echoes[i-2][j])
-                           for i in range(2,6) for j in range(5)]
-                self.stable_echoes=max(residuals)<.25
         if valid:
             isolated=(sensors['FrLh']<35 and sensors['RrLh']>100) or (sensors['FrRh']<35 and sensors['RrRh']>100)
             self.p['emergency_diag']=22 if isolated else 12
@@ -190,8 +180,7 @@ class DividerController(PreviousController):
             desired=70 if right<left else -70
             self.handle=previous_handle+max(-140*dt,min(140*dt,desired-previous_handle))
             handle=self.handle
-            cap,gain=(20,.6) if self.stable_echoes else (14,.45)
-            target=max(4,min(cap,(min(left,right)-12)*gain))
+            target=max(4,min(20,(min(left,right)-12)*0.6))
             self.accel=min(self.accel,target)
             accel=self.accel
             state='仕切り壁回避：斜め接近を保持して減速'
@@ -242,13 +231,18 @@ class Controller(DividerController):
         group=min(groups,key=lambda g:min(abs(a-reference) for a in g)-self.q['gap_weight']*len(g))
         return clamp(reference,group[0],group[-1])
 
-    def _step_drive(self,sensors,dt):
+    def step(self,sensors,dt):
         previous_handle=self.handle
         previous_accel=self.accel
         accel,handle,state=super().step(sensors,dt)
         if self.stopped:return accel,handle,state
         raw=[sensors[n] for n in ('Fr','FrLh','RrLh','FrRh','RrRh')]
         f,fl,sl,fr,sr=self.filtered
+        if self.guard_active and not self.turn and min(f,raw[0])>230 and min(sl,sr)>20 and min(fl,fr)>35:
+            target=45*(1-.4*min(1,abs(self.handle)/100))
+            self.accel=previous_accel+clamp(target-previous_accel,-100*dt,20*dt)
+            accel=self.accel
+            state='平行壁：前方余裕を確認して速度維持'
         h=math.sqrt(.5)
         rs=(fr*h-sr)/(6+fr*h)
         ls=(fl*h-sl)/(6+fl*h)
@@ -288,10 +282,3 @@ class Controller(DividerController):
         target*=clamp((min(sl,sr)-8)/16,.25,1)
         self.accel=previous_accel+clamp(target-previous_accel,-100*dt,20*dt)
         return self.accel,self.handle,label
-
-    def step(self,sensors,dt):
-        accel,handle,state=self._step_drive(sensors,dt)
-        # Display-only output telemetry. No simulator information is consumed.
-        target=0.0 if self.stopped else self.local_target
-        state=state.replace('仕切り壁回避：斜め接近を保持して減速','仕切り端：検出側から離れて通過')
-        return accel,handle,state+f' | target_deg={target:.3f}'

@@ -242,7 +242,7 @@ class Controller(DividerController):
         group=min(groups,key=lambda g:min(abs(a-reference) for a in g)-self.q['gap_weight']*len(g))
         return clamp(reference,group[0],group[-1])
 
-    def _step_drive(self,sensors,dt):
+    def step(self,sensors,dt):
         previous_handle=self.handle
         previous_accel=self.accel
         accel,handle,state=super().step(sensors,dt)
@@ -288,10 +288,3 @@ class Controller(DividerController):
         target*=clamp((min(sl,sr)-8)/16,.25,1)
         self.accel=previous_accel+clamp(target-previous_accel,-100*dt,20*dt)
         return self.accel,self.handle,label
-
-    def step(self,sensors,dt):
-        accel,handle,state=self._step_drive(sensors,dt)
-        # Display-only output telemetry. No simulator information is consumed.
-        target=0.0 if self.stopped else self.local_target
-        state=state.replace('仕切り壁回避：斜め接近を保持して減速','仕切り端：検出側から離れて通過')
-        return accel,handle,state+f' | target_deg={target:.3f}'

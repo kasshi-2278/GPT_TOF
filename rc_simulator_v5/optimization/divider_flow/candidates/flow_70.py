@@ -151,7 +151,7 @@ class DividerController(PreviousController):
                 # Discontinuous or noisy echoes keep the conservative policy.
                 residuals=[abs(self.startup_echoes[i][j]-2*self.startup_echoes[i-1][j]+self.startup_echoes[i-2][j])
                            for i in range(2,6) for j in range(5)]
-                self.stable_echoes=max(residuals)<.25
+                self.stable_echoes=max(residuals)<.15
         if valid:
             isolated=(sensors['FrLh']<35 and sensors['RrLh']>100) or (sensors['FrRh']<35 and sensors['RrRh']>100)
             self.p['emergency_diag']=22 if isolated else 12
@@ -242,7 +242,7 @@ class Controller(DividerController):
         group=min(groups,key=lambda g:min(abs(a-reference) for a in g)-self.q['gap_weight']*len(g))
         return clamp(reference,group[0],group[-1])
 
-    def _step_drive(self,sensors,dt):
+    def step(self,sensors,dt):
         previous_handle=self.handle
         previous_accel=self.accel
         accel,handle,state=super().step(sensors,dt)
@@ -288,10 +288,3 @@ class Controller(DividerController):
         target*=clamp((min(sl,sr)-8)/16,.25,1)
         self.accel=previous_accel+clamp(target-previous_accel,-100*dt,20*dt)
         return self.accel,self.handle,label
-
-    def step(self,sensors,dt):
-        accel,handle,state=self._step_drive(sensors,dt)
-        # Display-only output telemetry. No simulator information is consumed.
-        target=0.0 if self.stopped else self.local_target
-        state=state.replace('仕切り壁回避：斜め接近を保持して減速','仕切り端：検出側から離れて通過')
-        return accel,handle,state+f' | target_deg={target:.3f}'

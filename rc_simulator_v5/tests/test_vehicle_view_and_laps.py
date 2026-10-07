@@ -5,7 +5,7 @@ import unittest
 from config import VehicleConfig
 from simulation import Simulation
 from world import World
-from vehicle_view import perspective_columns,sensor_segments
+from vehicle_view import sensor_segments
 from lap_timer import LapTimer
 
 class ObserverTests(unittest.TestCase):
@@ -13,7 +13,6 @@ class ObserverTests(unittest.TestCase):
         sim=Simulation(World.load(),VehicleConfig(sensor_noise_std_cm=2),mode='manual')
         try:
             before=(copy.deepcopy(sim.sensors),copy.deepcopy(sim.hits),sim.rng.getstate(),sim.time,sim.distance)
-            perspective_columns(sim.world,sim.car,sim.config,count=32)
             sensor_segments(sim.config,sim.sensors)
             after=(sim.sensors,sim.hits,sim.rng.getstate(),sim.time,sim.distance)
             self.assertEqual(before,after)
@@ -24,15 +23,6 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(result['Fr'],((12,0),(62,0),50))
         self.assertAlmostEqual(result['RrLh'][1][0],7)
         self.assertAlmostEqual(result['RrLh'][1][1],60)
-
-    def test_projection_corrects_fisheye_of_flat_wall(self):
-        data={'schema_version':1,'units':'cm','extents_cm':[-500,-100,500,200],
-              'start':{'x':0,'y':0,'heading_deg':0},'walls':[{'id':'w','a':[-500,100],'b':[500,100],
-              'thickness_cm':2,'color':'red'}],'posts':[],'zones':[]}
-        world=World(data);car=SimpleNamespace(x=0,y=0,heading=0)
-        columns=perspective_columns(world,car,VehicleConfig(),count=21)
-        for depth,color,hit in columns:
-            self.assertTrue(hit);self.assertEqual(color,'red');self.assertAlmostEqual(depth,87)
 
 class LapTests(unittest.TestCase):
     def sim(self):

@@ -1,0 +1,18 @@
+{
+  "source_sha256": "ec959a186dbd8278df967871b3a34262848e2c5ecc08c20aa12abb30068f0552",
+  "variants_compared": 71,
+  "completed_tests": 2,
+  "tests": 10,
+  "collisions": 0,
+  "danger_events": 6,
+  "previous_danger_events": 6,
+  "previous_nominal_total_s": 399.138492,
+  "nominal_total_s": 395.417102,
+  "map_sha256": "967823ce9823a277895533cc1af7cb6e7c5587b299bea3e069063815a773e8de",
+  "nominal_weave_before": 8,
+  "nominal_weave_after": 9,
+  "highest_raw_score": 520.85,
+  "highest_raw_score_source": "Score_Best_Version.py",
+  "selected_source": "Best_Version.py",
+  "selection_reason": "Latest request to reduce divider slowdown; zero collision and unchanged completion/danger counts in matched ten tests; earlier score best retained separately."
+}
