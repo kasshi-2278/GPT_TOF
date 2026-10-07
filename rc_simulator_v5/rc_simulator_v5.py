@@ -19,6 +19,9 @@ from config import VehicleConfig, PHYSICS_HZ
 from geometry import direction, local_to_world, rectangle, wall_polygon, clamp
 from simulation import Simulation
 from world import World, DEFAULT_MAP
+from sonar_mapping import SonarMap
+from lap_timer import LapTimer
+from vehicle_view import VehicleView
 
 ROOT=Path(__file__).resolve().parent
 SENSOR_COLORS={'Fr':'#bf8314','FrLh':'#078c98','RrLh':'#337bba','FrRh':'#c76536','RrRh':'#b84973'}
@@ -58,8 +61,9 @@ class App:
         self.font=(self.family,10); self.smallfont=(self.family,9)
         self.map_path=Path(map_path)
         self.sim=Simulation(World.load(self.map_path))
-        self.sim.load_program(ROOT/'examples'/'sensor_drive.py')
+        self.sim.load_program(ROOT/'examples'/'sonic_drive_three_laps.py')
         self.closed=False; self.pending_steps=0; self.log_window=None
+        self.vehicle_view=None; self.lap_timer=LapTimer(self.sim,3); self.sonar_map=SonarMap()
         self.camera=Camera(); self.running=False; self.accumulator=0.0
         self.keys=set(); self.last_time=time.perf_counter(); self.animate=animate
         self.pan_anchor=None; self.wall_anchor=None; self.last_panel_time=0.0
@@ -71,7 +75,7 @@ class App:
         self.mode_var=tk.StringVar(value=list(MODES)[0])
         self.rate_var=tk.StringVar(value='1.0')
         self.interface_var=tk.StringVar(value='自動判定')
-        self.program_var=tk.StringVar(value='sensor_drive.py  |  関数 / Controller')
+        self.program_var=tk.StringVar(value='sonic_drive_three_laps.py  |  関数 / Controller')
         self.spawn_var=tk.StringVar(value='デモ開始')
         self.notice=tk.StringVar(value='ホイール：拡大縮小  /  右ドラッグ：移動  /  F：全体  /  Space：開始・停止')
         self.vars={}
@@ -130,6 +134,7 @@ class App:
         self._button(pybar,'再読込',self.reload_python)
         self._button(pybar,'Python停止',self.stop_python)
         self._button(pybar,'実行ログ',self.show_program_log)
+        self._button(pybar,'車視点 V',self.show_vehicle_view)
         interface=ttk.Combobox(pybar,textvariable=self.interface_var,values=list(INTERFACES),state='readonly',width=22)
         interface.pack(side='left',padx=6)
         interface.bind('<<ComboboxSelected>>',lambda e:self.interface_changed())
@@ -154,11 +159,14 @@ class App:
         heading('SIMULATION')
         label('status',(self.family,16,'bold'),'PAUSED')
         label('time'); label('position')
+        heading('LAP TIMES / ３周')
+        label('lap_times')
         heading('ULTRASONIC  /  cm')
         for name in ['Fr','FrLh','RrLh','FrRh','RrRh']:
             row=tk.Frame(p,bg='#142337'); row.pack(fill='x',padx=18,pady=2)
             tk.Label(row,text='●',fg=SENSOR_COLORS[name],bg='#142337',font=(self.family,13)).pack(side='left')
-            tk.Label(row,text=name,width=5,anchor='w',fg='#d8e3eb',bg='#142337',font=(self.family,11)).pack(side='left',padx=(4,0))
+            sensor_label={'Fr':'正面','FrLh':'左45°','RrLh':'左90°','FrRh':'右45°','RrRh':'右90°'}[name]
+            tk.Label(row,text=sensor_label,width=6,anchor='w',fg='#d8e3eb',bg='#142337',font=(self.family,11)).pack(side='left',padx=(4,0))
             var=tk.StringVar(); self.vars[name]=var
             tk.Label(row,textvariable=var,anchor='e',fg='white',bg='#142337',font=(self.family,12,'bold')).pack(side='right')
         heading('CONTROL')
@@ -198,6 +206,7 @@ class App:
         if key=='r': self.reset()
         elif key=='f': self.fit()
         elif key=='c': self.follow.set(not self.follow.get()); self.options_changed()
+        elif key=='v': self.show_vehicle_view()
         elif key=='m':
             values=list(MODES); self.mode_var.set(values[(values.index(self.mode_var.get())+1)%len(values)]); self.change_mode()
         elif key=='escape':
@@ -446,11 +455,11 @@ class App:
                 cv.create_oval(hx-2,hy-2,hx+2,hy+2,fill=col,outline='',tags='dynamic')
         self.wpoly(c.polygon(cfg),fill='#356da0' if not s.collision_id else '#c35349',outline='#173a58',width=1.5,tags='dynamic')
         # Rear wheels align with body; front wheels rotate with physical left-positive steer.
-        for axle in [-1,1]:
+        for axle in [cfg.rear_axle_cm,cfg.front_axle_cm]:
             for side in [-1,1]:
-                wx,wy=local_to_world(c.x,c.y,c.heading,axle*cfg.wheelbase_cm/2,side*(cfg.width_cm/2+1.0))
-                heading=c.heading-c.steer if axle>0 else c.heading
-                self.wpoly(rectangle(wx,wy,heading,6.5,2.8),fill='#253440',outline='#172128',tags='dynamic')
+                wx,wy=local_to_world(c.x,c.y,c.heading,axle,side*(cfg.width_cm/2+1.0))
+                heading=c.heading-c.steer if axle==cfg.front_axle_cm else c.heading
+                self.wpoly(rectangle(wx,wy,heading,cfg.tire_diameter_cm,2.8),fill='#253440',outline='#172128',tags='dynamic')
         arrow_start=local_to_world(c.x,c.y,c.heading,-cfg.length_cm*.15,0)
         arrow_end=local_to_world(c.x,c.y,c.heading,cfg.length_cm*.40,0)
         self.wline([arrow_start,arrow_end],fill='white',width=1.8,arrow='last',tags='dynamic')
@@ -470,6 +479,10 @@ class App:
         v['status'].set(status)
         v['time'].set(f'{s.time:7.2f} s  |  {s.distance/100:5.2f} m' + (f'  |  {s.laps} 周' if s.laps is not None else ''))
         v['position'].set(f'x {c.x:6.1f} / y {c.y:6.1f} cm   方位 {c.heading:+.1f}°')
+        lap_text=[f'{i}周目  {value:.2f} s' for i,value in enumerate(self.lap_timer.lap_times,1)]
+        if self.lap_timer.completed:lap_text.append(f'３周合計  {self.lap_timer.total_time:.2f} s')
+        else:lap_text.append(f'{len(lap_text)+1}周目 計測中  {max(0,s.time-self.lap_timer.last_crossing_time):.2f} s')
+        v['lap_times'].set('\n'.join(lap_text))
         for name in SENSOR_COLORS: v[name].set(f'{s.sensors.get(name,0):6.1f}')
         v['commands'].set(f'Accel {c.accel:+6.1f}     Handle {c.handle:+6.1f}')
         v['motion'].set(f'速度 {c.speed:5.1f} cm/s   操舵 {c.steer:+5.1f}°')
@@ -490,6 +503,8 @@ class App:
 
 
     def refresh(self):
+        self.lap_timer.sample(self.sim)
+        self.sonar_map.sample(self.sim)
         if self.follow.get():
             self.camera.cx=self.sim.car.x; self.camera.cy=self.sim.car.y
             self.draw_static()
@@ -534,6 +549,11 @@ class App:
         self.notice.set('Pythonを終了し車両を停止しました。リセット/再読込で再実行できます。')
         self.refresh()
 
+    def show_vehicle_view(self):
+        if self.vehicle_view is not None and self.vehicle_view.window.winfo_exists():
+            self.vehicle_view.window.lift();return
+        self.vehicle_view=VehicleView(self)
+
     def show_program_log(self):
         if self.log_window is not None and self.log_window.winfo_exists():
             self.log_window.lift(); return
@@ -556,6 +576,7 @@ class App:
     def close(self):
         if self.closed: return
         self.closed=True; self.running=False; self.pending_steps=0
+        if self.vehicle_view is not None:self.vehicle_view.close()
         self.sim.close(); self.root.destroy()
 
     def tick(self):

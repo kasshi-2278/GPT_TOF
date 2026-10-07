@@ -13,6 +13,9 @@ ROOT=Path(__file__).resolve().parent
 def simple_world(walls=None,posts=None,zones=None):
     data=deepcopy(World.load().data)
     data['walls']=walls or []; data['posts']=posts or []; data['zones']=zones or []
+    # This fixture drives north toward test walls, independent of demo direction.
+    data['start']['heading_deg']=0
+    data['spawns']['demo']['heading_deg']=0
     return World(data)
 
 def wall(a,b,thickness=2):
@@ -87,6 +90,40 @@ class MapTests(unittest.TestCase):
             self.assertEqual(World.load(p).data,self.world.data)
 
 class SimulationTests(unittest.TestCase):
+    def test_front_half_hcsr04_geometry(self):
+        cfg=VehicleConfig();specs=cfg.sensor_specs()
+        self.assertEqual(specs['Fr'],(12.0,0.0,0.0))
+        self.assertEqual(cfg.length_cm/2-specs['Fr'][0],2.0)
+        self.assertEqual({name:spec[2] for name,spec in specs.items()},
+                         dict(Fr=0,FrLh=-45,RrLh=-90,FrRh=45,RrRh=90))
+        for forward,left,angle in specs.values():
+            self.assertGreater(forward,0)
+            self.assertLessEqual(forward,cfg.length_cm/2)
+            self.assertLessEqual(abs(left),cfg.width_cm/2)
+        for name in ('FrLh','RrLh'):
+            right=specs[name.replace('Lh','Rh')]
+            self.assertEqual(right,(specs[name][0],-specs[name][1],-specs[name][2]))
+        w=simple_world([wall((-100,-100),(-100,400))])
+        origin=local_to_world(0,0,0,*specs['RrLh'][:2])
+        self.assertAlmostEqual(w.raycast(origin,-90,250)[0],89)
+    def test_counterclockwise_defaults(self):
+        data=World.load().data
+        self.assertEqual(data['spawns']['demo']['heading_deg'],-180)
+        for name in ('start1','start2','start3'):
+            self.assertEqual(data['spawns'][name]['heading_deg'],90)
+        points=data['demo_route']['points']
+        self.assertGreater(sum(a[0]*b[1]-b[0]*a[1] for a,b in edges(points)),0)
+
+    def test_sensor_controller_mirrors_steering(self):
+        from examples.sensor_drive import Controller
+        right=Controller();left=Controller()
+        sensors=dict(Fr=200,FrLh=150,RrLh=140,FrRh=70,RrRh=80)
+        mirrored=dict(Fr=200,FrLh=70,RrLh=80,FrRh=150,RrRh=140)
+        for _ in range(10):
+            accel,handle,state=right.step(sensors,.05)
+            expected=left._step_left(mirrored,.05)
+            self.assertEqual((accel,handle),(expected[0],-expected[1]))
+            self.assertIn('右壁追従',state)
     def test_positive_handle_turns_left(self):
         c=Car(0,0,accel=40,handle=50)
         for i in range(120): c.move(VehicleConfig(),1/120)
@@ -127,6 +164,17 @@ class SimulationTests(unittest.TestCase):
         self.assertLess(math.dist((135,342),cam.world(*cam.screen(135,342))),1e-8)
     def test_config_validation(self):
         with self.assertRaises(ValueError): VehicleConfig(wheelbase_cm=40)
+        with self.assertRaises(ValueError): VehicleConfig(front_axle_from_front_cm=12)
+
+    def test_user_vehicle_dimensions(self):
+        cfg=VehicleConfig()
+        self.assertEqual((cfg.length_cm,cfg.width_cm),(28,20))
+        self.assertEqual(cfg.length_cm/2-cfg.front_axle_cm,7)
+        self.assertEqual(cfg.length_cm/2-cfg.rear_axle_cm,24)
+        self.assertEqual(cfg.front_axle_cm-cfg.rear_axle_cm,17)
+        self.assertEqual(cfg.tire_diameter_cm,5.5)
+        x,y,xx,yy=bounds(Car(0,0).polygon(cfg))
+        self.assertEqual((xx-x,yy-y),(20,28))
 
 
 def suite():

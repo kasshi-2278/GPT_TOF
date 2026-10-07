@@ -4,25 +4,27 @@ Inputs: Fr, FrLh, RrLh, FrRh, RrRh [cm], dt [seconds].
 Outputs: Accel, Handle [-100,100], text. Handle > 0 turns LEFT.
 No world coordinates, compass heading, odometry, route or map are used.
 
-A local line fitted to two left ultrasonic returns estimates left-wall
+A local line fitted to two right ultrasonic returns estimates right-wall
 orientation and clearance. This ASSUMES both returns lie on the same wall;
 corners, angled reflections and beam dropouts can violate that assumption.
 The front/right sensors override the demand near obstacles. Speed and
 steering commands change progressively. Emergency stop is latched, because
 blind reversing is unsafe with no directly rear-facing sensor.
 
-These parameters are for the uncalibrated 30x18cm V5 vehicle and its
-30/65-degree sensor mounts, NOT measured specifications of the real car.
+The default direction is counterclockwise, following the right exterior wall.
+These parameters are for the 28x20cm V5 vehicle and its
+45/90-degree HC-SR04 sensor mounts. Exact mounting positions are provisional.
 This is an editable starting point, not a proof of safe driving everywhere.
 """
 import math
+from config import VehicleConfig
 
 # Mounts in the VEHICLE frame (forward, left), not global map coordinates.
-FRONT_SENSOR_FORWARD_CM=14.0
-REAR_SENSOR_FORWARD_CM=-11.0
-SENSOR_LEFT_OFFSET_CM=6.0
-FRONT_LEFT_ANGLE_DEG=30.0
-REAR_LEFT_ANGLE_DEG=65.0
+_mounts=VehicleConfig().sensor_specs()
+FRONT_SENSOR_FORWARD_CM,SENSOR_LEFT_OFFSET_CM,_front_angle=_mounts['FrLh']
+REAR_SENSOR_FORWARD_CM,_side_offset,_side_angle=_mounts['RrLh']
+FRONT_LEFT_ANGLE_DEG=-_front_angle
+REAR_LEFT_ANGLE_DEG=-_side_angle
 RANGE_CM=250.0
 TARGET_LEFT_CLEARANCE_CM=44.0
 
@@ -37,6 +39,18 @@ class Controller:
         return max(lower,min(upper,value))
 
     def step(self, sensors, dt):
+        # Mirror the inputs into the left-wall policy, then mirror its output.
+        # Keep internal steering state in that frame, including latched stops.
+        mirrored=dict(sensors)
+        for left,right in [('FrLh','FrRh'),('RrLh','RrRh')]:
+            mirrored.pop(left,None); mirrored.pop(right,None)
+            if right in sensors: mirrored[left]=sensors[right]
+            if left in sensors: mirrored[right]=sensors[left]
+        accel,handle,state=self._step_left(mirrored,dt)
+        state=state.replace('左壁追従','右壁追従').replace('左旋回','反転旋回').replace('右旋回','左旋回').replace('反転旋回','右旋回')
+        return accel,-handle,state
+
+    def _step_left(self, sensors, dt):
         names=('Fr','FrLh','RrLh','FrRh','RrRh')
         if not isinstance(dt,(int,float)) or not math.isfinite(dt) or not 0<dt<=.2:
             self.stopped=True

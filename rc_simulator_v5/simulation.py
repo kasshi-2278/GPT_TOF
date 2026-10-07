@@ -134,6 +134,8 @@ class Simulation:
 
     def read_sensors(self):
         c=self.car
+        self.sensor_observation_id=getattr(self,"sensor_observation_id",0)+1
+        self.sensor_observation_pose=(c.x,c.y,c.heading,self.time)
         for name,(forward,left,angle) in self.config.sensor_specs().items():
             origin=local_to_world(c.x,c.y,c.heading,forward,left)
             d,hit=self.world.raycast(origin,c.heading+angle,self.config.sensor_range_cm)

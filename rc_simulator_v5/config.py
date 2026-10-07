@@ -1,15 +1,17 @@
-"""Uncalibrated vehicle values inherited from V3; world units are cm.
+"""Vehicle geometry and uncalibrated dynamics; world units are cm.
 
 Positive Handle means LEFT, negative Handle means RIGHT.
-These values are not measurements of the user's physical car.
+Body and axle dimensions are user-specified; dynamics remain uncalibrated.
 """
 from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class VehicleConfig:
-    length_cm: float = 30.0
-    width_cm: float = 18.0
-    wheelbase_cm: float = 22.0
+    length_cm: float = 28.0
+    width_cm: float = 20.0
+    wheelbase_cm: float = 17.0
+    front_axle_from_front_cm: float = 7.0
+    tire_diameter_cm: float = 5.5
     max_steer_deg: float = 32.0
     forward_cm_s: float = 80.0
     reverse_cm_s: float = 40.0
@@ -29,15 +31,28 @@ class VehicleConfig:
                 raise ValueError(f'{name}: invalid value {value}')
         if self.wheelbase_cm > self.length_cm or self.max_steer_deg >= 80:
             raise ValueError('Invalid wheelbase or steering angle')
+        if self.front_axle_from_front_cm + self.wheelbase_cm > self.length_cm:
+            raise ValueError('Axles must lie within the body')
+
+    @property
+    def front_axle_cm(self):
+        """Front axle's forward coordinate relative to the body center."""
+        return self.length_cm / 2 - self.front_axle_from_front_cm
+
+    @property
+    def rear_axle_cm(self):
+        return self.front_axle_cm - self.wheelbase_cm
 
     def sensor_specs(self):
         # Local coordinates: forward, LEFT. Angles: right positive.
+        # HC-SR04: provisional mounts in the front half of the body.
+        # RrLh/RrRh retain legacy API names but now point directly sideways.
         return {
-            'Fr': (self.length_cm / 2, 0.0, 0.0),
-            'FrLh': (self.length_cm / 2 - 1, self.width_cm / 3, -30.0),
-            'RrLh': (-self.length_cm / 2 + 4, self.width_cm / 3, -65.0),
-            'FrRh': (self.length_cm / 2 - 1, -self.width_cm / 3, 30.0),
-            'RrRh': (-self.length_cm / 2 + 4, -self.width_cm / 3, 65.0),
+            'Fr': (self.length_cm / 2 - 2.0, 0.0, 0.0),
+            'FrLh': (self.length_cm / 2 - 1, self.width_cm / 2, -45.0),
+            'RrLh': (self.front_axle_cm, self.width_cm / 2, -90.0),
+            'FrRh': (self.length_cm / 2 - 1, -self.width_cm / 2, 45.0),
+            'RrRh': (self.front_axle_cm, -self.width_cm / 2, 90.0),
         }
 
 STEERING_RIGHT_PWM = 330

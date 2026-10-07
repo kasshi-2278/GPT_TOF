@@ -210,8 +210,10 @@ time.sleep(.1)
         for k in VALUES: self.assertLess(abs(data[k]-VALUES[k]),.5)
     def test_legacy_pwm_does_move_vehicle(self):
         s=self.sim(self.legacy_source('pwm.set_pwm(7,0,425)\npwm.set_pwm(1,0,488)\ntime.sleep(1)'))
+        initial_heading=s.car.heading
         s.run_seconds(.8)
-        self.assertIsNone(s.program_error); self.assertGreater(s.distance,10); self.assertLess(s.car.heading,0)
+        self.assertIsNone(s.program_error); self.assertGreater(s.distance,10)
+        self.assertLess((s.car.heading-initial_heading+180)%360-180,0)
     def test_legacy_sleep_uses_simulation_time(self):
         s=self.sim(self.legacy_source('pwm.set_pwm(7,0,425)\ntime.sleep(.2)\npwm.set_pwm(7,0,375)\ntime.sleep(.2)'))
         s.run_seconds(.35)
