@@ -1,0 +1,22 @@
+{
+  "gui_checks_passed": 12,
+  "checks": [
+    "default_external_python_no_guide_or_worker_before_start",
+    "real_PY_load_button_and_dialog_flow",
+    "nonblocking_start_and_physics_movement",
+    "pause_freezes_virtual_time",
+    "single_step_advances_50ms",
+    "reset_closes_worker_and_rewinds",
+    "legacy_GPIO_PWM_and_live_log_window",
+    "stop_terminates_worker_and_vehicle",
+    "unresponsive_python_stops_without_freezing_Tk",
+    "guide_explicit_only_and_no_guide_on_switch_back",
+    "loader_visible_at_minimum_window_size",
+    "screenshots_from_running_external_sensor_controller"
+  ],
+  "tk_version": 8.6,
+  "mode": "program",
+  "program": "sensor_drive.py",
+  "control_uses_guide": false,
+  "platform": "Linux/Xvfb (not Windows/macOS tested)"
+}

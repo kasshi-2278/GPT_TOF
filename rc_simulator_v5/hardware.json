@@ -1,0 +1,20 @@
+{
+  "sensor_pins_board": {
+    "Fr": [15, 33], "FrLh": [13, 40], "RrLh": [35, 37],
+    "FrRh": [32, 31], "RrRh": [36, 38]
+  },
+  "steering_channel": 1,
+  "throttle_channel": 7,
+  "pca9685_address": 64,
+  "pwm_frequency_hz": 60,
+  "steering_right_pwm": 330,
+  "steering_center_pwm": 435,
+  "steering_left_pwm": 540,
+  "throttle_reverse_pwm": 220,
+  "throttle_stopped_pwm": 375,
+  "throttle_forward_pwm": 500,
+  "sound_speed_cm_s": 34000,
+  "legacy_esc_mode": "brake_neutral_reverse",
+  "minimum_neutral_s": 0.01,
+  "note": "写真のピン/PWM値。ESCは汎用の仮モデルであり実機型番の再現ではありません。"
+}
