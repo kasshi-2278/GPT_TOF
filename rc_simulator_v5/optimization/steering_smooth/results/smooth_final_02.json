@@ -1,0 +1,49 @@
+{
+  "name": "smooth_final_02",
+  "program": "examples/sonic_drive_smooth.py",
+  "sha256": "bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202",
+  "external_worker": true,
+  "seed": 8,
+  "noise_cm": 0,
+  "dx": 0,
+  "dy": 0,
+  "dh": 0,
+  "completed_three_laps": true,
+  "laps_completed": 3,
+  "lap_times_s": [
+    134.149076,
+    133.157644,
+    131.831772
+  ],
+  "crossing_times_s": [
+    134.149076,
+    267.306719,
+    399.138492
+  ],
+  "total_time_s": 399.138492,
+  "elapsed_s": 399.15,
+  "collisions": 0,
+  "collision": null,
+  "danger": 0,
+  "sharp_steer": 0,
+  "weave": 8,
+  "stops": 0,
+  "min_clearance_cm": 15.786994,
+  "program_error": null,
+  "score": 520.85,
+  "final_pose": [
+    87.66112690814607,
+    199.71083091771087,
+    161.23420152449
+  ],
+  "final_state": "平滑操舵：安全制御優先：左回避 | target_deg=21.513",
+  "map_sha256": "967823ce9823a277895533cc1af7cb6e7c5587b299bea3e069063815a773e8de",
+  "timing": "Ordered original evaluator regions + southbound crossing of spawn y within +/-60cm, >=3000cm per lap; continuous car/controller state; no resets.",
+  "travel_distance_cm": 10268.035592644079,
+  "straight_distance_cm": 6892.220350176722,
+  "straight_fraction": 0.6712306641315348,
+  "steering_total_variation_deg": 3240.821151675077,
+  "original_score": 520.85,
+  "straight_bonus": 201.369199,
+  "smooth_score": 722.219199
+}

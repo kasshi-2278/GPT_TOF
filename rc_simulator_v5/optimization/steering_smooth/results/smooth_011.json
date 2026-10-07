@@ -1,0 +1,49 @@
+{
+  "name": "smooth_011",
+  "program": "optimization/steering_smooth/candidates/smooth_011.py",
+  "sha256": "34586651512b368ff0b171a4fc34faa3d3e52a23f31870540392008450fe9740",
+  "external_worker": false,
+  "seed": 7,
+  "noise_cm": 0,
+  "dx": 0,
+  "dy": 0,
+  "dh": 0,
+  "completed_three_laps": false,
+  "laps_completed": 1,
+  "lap_times_s": [
+    132.32454
+  ],
+  "crossing_times_s": [
+    132.32454
+  ],
+  "total_time_s": null,
+  "elapsed_s": 251.15,
+  "collisions": 0,
+  "collision": null,
+  "danger": 2,
+  "sharp_steer": 0,
+  "weave": 6,
+  "stops": 0,
+  "min_clearance_cm": 7.250987,
+  "program_error": null,
+  "score": -351.15,
+  "final_pose": [
+    457.34062641552464,
+    587.9784422983976,
+    -36.959680882008456
+  ],
+  "final_state": "安全停止：接近限界 | target_deg=0.000",
+  "map_sha256": "967823ce9823a277895533cc1af7cb6e7c5587b299bea3e069063815a773e8de",
+  "timing": "Ordered original evaluator regions + southbound crossing of spawn y within +/-60cm, >=3000cm per lap; continuous car/controller state; no resets.",
+  "travel_distance_cm": 6150.152038102087,
+  "straight_distance_cm": 4087.4251054720435,
+  "straight_fraction": 0.6646055382288414,
+  "steering_total_variation_deg": 1813.4340752381856,
+  "original_score": -351.15,
+  "straight_bonus": 0,
+  "smooth_score": -351.15,
+  "rate": 120,
+  "jerk": 3200,
+  "tau": 0,
+  "band": 0
+}

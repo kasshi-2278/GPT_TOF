@@ -1,0 +1,49 @@
+{
+  "name": "smooth_007",
+  "program": "optimization/steering_smooth/candidates/smooth_007.py",
+  "sha256": "a3f3b607df6b46949fcc1d34add0286a03218fed71d48fdf4b44028603a808f5",
+  "external_worker": false,
+  "seed": 7,
+  "noise_cm": 0,
+  "dx": 0,
+  "dy": 0,
+  "dh": 0,
+  "completed_three_laps": false,
+  "laps_completed": 1,
+  "lap_times_s": [
+    131.588972
+  ],
+  "crossing_times_s": [
+    131.588972
+  ],
+  "total_time_s": null,
+  "elapsed_s": 277.891667,
+  "collisions": 1,
+  "collision": "post_22",
+  "danger": 1,
+  "sharp_steer": 0,
+  "weave": 1,
+  "stops": 0,
+  "min_clearance_cm": 0.13917,
+  "program_error": null,
+  "score": -807.891667,
+  "final_pose": [
+    296.7652751216331,
+    538.6369245691285,
+    110.22513571244247
+  ],
+  "final_state": "平滑操舵：Follow the Gap：目標が空き空間内 | target_deg=0.000 | gap_min_deg=-25.0 | gap_max_deg=60.0",
+  "map_sha256": "967823ce9823a277895533cc1af7cb6e7c5587b299bea3e069063815a773e8de",
+  "timing": "Ordered original evaluator regions + southbound crossing of spawn y within +/-60cm, >=3000cm per lap; continuous car/controller state; no resets.",
+  "travel_distance_cm": 7119.473641790522,
+  "straight_distance_cm": 4899.502888378611,
+  "straight_fraction": 0.6881833032738643,
+  "steering_total_variation_deg": 2032.43685900474,
+  "original_score": -807.891667,
+  "straight_bonus": 0,
+  "smooth_score": -807.891667,
+  "rate": 120,
+  "jerk": 800,
+  "tau": 0,
+  "band": 0
+}

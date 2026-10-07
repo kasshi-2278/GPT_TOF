@@ -19,6 +19,7 @@ from config import VehicleConfig, PHYSICS_HZ
 from geometry import direction, local_to_world, rectangle, wall_polygon, clamp
 from simulation import Simulation
 from world import World, DEFAULT_MAP
+from optimization.straight_score import straight_metrics, RULES as STRAIGHT_RULES
 from sonar_mapping import SonarMap
 from lap_timer import LapTimer
 from vehicle_view import VehicleView
@@ -61,9 +62,11 @@ class App:
         self.font=(self.family,10); self.smallfont=(self.family,9)
         self.map_path=Path(map_path)
         self.sim=Simulation(World.load(self.map_path))
-        self.sim.load_program(ROOT/'examples'/'sonic_drive_follow_gap.py')
+        self.sim.load_program(ROOT/'examples'/'sonic_drive_smooth.py')
         self.closed=False; self.pending_steps=0; self.log_window=None
         self.vehicle_view=None; self.lap_timer=LapTimer(self.sim,3); self.sonar_map=SonarMap()
+        self.straight_identity=None;self.straight_updated=-1;self.straight_frozen=False
+        self.straight_summary={'straight_fraction':0}
         self.camera=Camera(); self.running=False; self.accumulator=0.0
         self.keys=set(); self.last_time=time.perf_counter(); self.animate=animate
         self.pan_anchor=None; self.wall_anchor=None; self.last_panel_time=0.0
@@ -75,7 +78,7 @@ class App:
         self.mode_var=tk.StringVar(value=list(MODES)[0])
         self.rate_var=tk.StringVar(value='1.0')
         self.interface_var=tk.StringVar(value='自動判定')
-        self.program_var=tk.StringVar(value='sonic_drive_follow_gap.py  |  関数 / Controller')
+        self.program_var=tk.StringVar(value='sonic_drive_smooth.py  |  関数 / Controller')
         self.spawn_var=tk.StringVar(value='デモ開始')
         self.notice=tk.StringVar(value='ホイール：拡大縮小  /  右ドラッグ：移動  /  F：全体  /  Space：開始・停止')
         self.vars={}
@@ -161,6 +164,8 @@ class App:
         label('time'); label('position')
         heading('LAP TIMES / ３周')
         label('lap_times')
+        heading('STRAIGHT / 直進加点')
+        label('straight')
         heading('ULTRASONIC  /  cm')
         for name in ['Fr','FrLh','RrLh','FrRh','RrRh']:
             row=tk.Frame(p,bg='#142337'); row.pack(fill='x',padx=18,pady=2)
@@ -483,6 +488,9 @@ class App:
         if self.lap_timer.completed:lap_text.append(f'３周合計  {self.lap_timer.total_time:.2f} s')
         else:lap_text.append(f'{len(lap_text)+1}周目 計測中  {max(0,s.time-self.lap_timer.last_crossing_time):.2f} s')
         v['lap_times'].set('\n'.join(lap_text))
+        fraction=self.straight_summary['straight_fraction']
+        bonus=STRAIGHT_RULES['max_bonus']*fraction if self.lap_timer.completed else 0
+        v['straight'].set(f'直進割合 {fraction*100:.1f}%  /  +{bonus:.2f} 点'+('' if self.lap_timer.completed else '\n加点は３周完走時'))
         for name in SENSOR_COLORS: v[name].set(f'{s.sensors.get(name,0):6.1f}')
         v['commands'].set(f'Accel {c.accel:+6.1f}     Handle {c.handle:+6.1f}')
         v['motion'].set(f'速度 {c.speed:5.1f} cm/s   操舵 {c.steer:+5.1f}°')
@@ -505,6 +513,12 @@ class App:
     def refresh(self):
         self.lap_timer.sample(self.sim)
         self.sonar_map.sample(self.sim)
+        identity=(id(self.sim),id(self.sim.car))
+        if identity!=self.straight_identity:
+            self.straight_identity=identity;self.straight_updated=-1;self.straight_frozen=False
+        if not self.straight_frozen and (self.sim.time-self.straight_updated>=1 or self.lap_timer.completed):
+            self.straight_summary=straight_metrics(self.sim.logs)
+            self.straight_updated=self.sim.time;self.straight_frozen=self.lap_timer.completed
         if self.follow.get():
             self.camera.cx=self.sim.car.x; self.camera.cy=self.sim.car.y
             self.draw_static()

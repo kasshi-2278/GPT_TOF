@@ -1,0 +1,9 @@
+{
+  "max_bonus": 300,
+  "max_abs_steer_deg": 2,
+  "max_yaw_rate_deg_s": 6,
+  "min_speed_cm_s": 5,
+  "min_segment_s": 1,
+  "min_segment_cm": 20,
+  "bonus": "300 * qualified straight distance / total travel distance; only on three-lap completion; stopped distance never credited."
+}
