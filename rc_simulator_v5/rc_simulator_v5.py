@@ -20,6 +20,7 @@ from geometry import direction, local_to_world, rectangle, wall_polygon, clamp
 from simulation import Simulation
 from world import World, DEFAULT_MAP
 from optimization.straight_score import straight_metrics, RULES as STRAIGHT_RULES
+from optimization.time_score import time_bonus
 from sonar_mapping import SonarMap
 from lap_timer import LapTimer
 from vehicle_view import VehicleView
@@ -164,7 +165,7 @@ class App:
         label('time'); label('position')
         heading('LAP TIMES / ３周')
         label('lap_times')
-        heading('STRAIGHT / 直進加点')
+        heading('SCORE / 完走加点')
         label('straight')
         heading('ULTRASONIC  /  cm')
         for name in ['Fr','FrLh','RrLh','FrRh','RrRh']:
@@ -490,7 +491,9 @@ class App:
         v['lap_times'].set('\n'.join(lap_text))
         fraction=self.straight_summary['straight_fraction']
         bonus=STRAIGHT_RULES['max_bonus']*fraction if self.lap_timer.completed else 0
-        v['straight'].set(f'直進割合 {fraction*100:.1f}%  /  +{bonus:.2f} 点'+('' if self.lap_timer.completed else '\n加点は３周完走時'))
+        speed_bonus=time_bonus(self.lap_timer.completed,self.lap_timer.total_time,
+                              int(bool(s.collision_id)),s.program_error)
+        v['straight'].set(f'直進 {fraction*100:.1f}%  +{bonus:.2f} 点\n周回時間 +{speed_bonus:.2f} 点'+('' if self.lap_timer.completed else '\n加点は３周完走時'))
         for name in SENSOR_COLORS: v[name].set(f'{s.sensors.get(name,0):6.1f}')
         v['commands'].set(f'Accel {c.accel:+6.1f}     Handle {c.handle:+6.1f}')
         v['motion'].set(f'速度 {c.speed:5.1f} cm/s   操舵 {c.steer:+5.1f}°')

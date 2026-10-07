@@ -1,0 +1,11 @@
+﻿name,completed_three_laps,total_time_s,collisions,danger,weave,original_score,straight_bonus,smooth_score,time_bonus,race_score,sha256
+smooth_final_01,True,399.138492,0,0,8,520.85,201.369199,722.219199,200.861508,923.080707,bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202
+smooth_final_02,True,399.138492,0,0,8,520.85,201.369199,722.219199,200.861508,923.080707,bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202
+smooth_final_03,False,,0,0,1,-224.4,0,-224.4,0.0,-224.4,bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202
+smooth_final_04,False,,0,1,0,-132.6,0,-132.6,0.0,-132.6,bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202
+smooth_final_05,False,,0,1,2,-385.2,0,-385.2,0.0,-385.2,bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202
+smooth_final_06,False,,0,1,2,-160.9,0,-160.9,0.0,-160.9,bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202
+smooth_final_07,False,,0,1,2,-161.3,0,-161.3,0.0,-161.3,bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202
+smooth_final_08,False,,0,0,1,-226.75,0,-226.75,0.0,-226.75,bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202
+smooth_final_09,False,,0,1,1,-142.9,0,-142.9,0.0,-142.9,bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202
+smooth_final_10,False,,0,1,5,-187.55,0,-187.55,0.0,-187.55,bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202

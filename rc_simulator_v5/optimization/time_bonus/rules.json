@@ -1,0 +1,5 @@
+{
+  "reference_three_lap_seconds": 600,
+  "points_per_second": 1,
+  "formula": "max(0, 600 - three-lap total seconds); only collision-free completion without program error."
+}

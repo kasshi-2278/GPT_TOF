@@ -1,5 +1,6 @@
 """Explicit extra reward authorized by the user; existing score is unchanged."""
 import math
+from optimization.time_score import add_time_score
 
 RULES={'max_bonus':300,'max_abs_steer_deg':2,'max_yaw_rate_deg_s':6,
        'min_speed_cm_s':5,'min_segment_s':1,'min_segment_cm':20,
@@ -42,4 +43,4 @@ def add_straight_score(result,rows):
     bonus=RULES['max_bonus']*result['straight_fraction'] if result['completed_three_laps'] else 0
     result['original_score']=result['score'];result['straight_bonus']=round(bonus,6)
     result['smooth_score']=round(result['score']+bonus,6)
-    return result
+    return add_time_score(result)

@@ -1,0 +1,21 @@
+{
+  "recorded_runs": 100,
+  "new_driving_runs": 0,
+  "best_candidate": "smooth_079",
+  "best_original_score": 520.85,
+  "best_straight_score": 722.219199,
+  "time_bonus": 200.861508,
+  "best_race_score": 923.080707,
+  "selected_program": "examples/sonic_drive_smooth.py",
+  "selected_source_sha256": "bc4a84a5f90dcb414fa9a95aff361c8d4412f04ffa11cdb071a0b8ad9fecc202",
+  "previous_selected_candidate": "smooth_079",
+  "selection_unchanged": true,
+  "validation_completion": 2,
+  "validation_tests": 10,
+  "validation_collisions": 0,
+  "rules": {
+    "reference_three_lap_seconds": 600,
+    "points_per_second": 1,
+    "formula": "max(0, 600 - three-lap total seconds); only collision-free completion without program error."
+  }
+}
