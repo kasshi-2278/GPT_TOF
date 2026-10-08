@@ -5,5 +5,19 @@
   "min_speed_cm_s": 5,
   "min_segment_s": 1,
   "min_segment_cm": 20,
-  "bonus": "300 * qualified straight distance / total travel distance; only on three-lap completion; stopped distance never credited."
+  "bonus": "300 * qualified straight distance / total travel distance; only on three-lap completion; stopped distance never credited.",
+  "corner_max_bonus": 100,
+  "corner_min_speed_cm_s": 8,
+  "corner_min_yaw_rate_deg_s": 4,
+  "corner_steering_rate_full_quality_deg_s": 12,
+  "corner_steering_rate_zero_quality_deg_s": 60,
+  "corner_steering_jerk_full_quality_deg_s2": 80,
+  "corner_steering_jerk_zero_quality_deg_s2": 600,
+  "corner_bonus": "100 * distance-weighted corner smoothness; only on collision-free three-lap completion with no program error. Corner samples require speed >=8 cm/s and yaw rate >=4 deg/s. Quality is the mean of normalized steering-rate and steering-jerk quality; slow/straight travel cannot earn it.",
+  "lap_speed_reference_seconds": 600,
+  "lap_speed_points_per_second": 1,
+  "distance_reference_cm": 10500,
+  "distance_best_cm": 9500,
+  "distance_max_bonus": 100,
+  "pace_and_distance_bonus_gate": "Three-lap completion, zero collisions, zero danger events, zero sharp-steer events, zero unnecessary stops, and no program error. Lap speed bonus is 1 point per second below 600 seconds total. Distance bonus is 100 * clamp((10500 - travel_distance_cm) / 1000, 0, 1)."
 }
