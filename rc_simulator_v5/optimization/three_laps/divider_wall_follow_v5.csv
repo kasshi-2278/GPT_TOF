@@ -1,0 +1,11 @@
+﻿name,seed,noise_cm,dx,dy,dh,completed_three_laps,laps_completed,total_time_s,collisions,danger,sharp_steer,weave,stops,min_clearance_cm,score
+divider_wall_v5case_01,7,0,0,0,0,True,3,401.320871,0,0,0,3,0,12.943543,568.65
+divider_wall_v5case_02,8,0,0,0,0,True,3,401.320871,0,0,0,3,0,12.943543,568.65
+divider_wall_v5case_03,11,0.5,2,0,2,False,0,,0,0,0,1,1,10.222385,-224.4
+divider_wall_v5case_04,12,0.5,-2,0,-2,False,0,,0,1,0,0,0,6.941209,-132.6
+divider_wall_v5case_05,13,1,3,2,3,False,1,,0,0,0,2,1,10.238961,-368.5
+divider_wall_v5case_06,14,1,-3,-2,-3,False,0,,0,1,0,2,0,9.117512,-160.25
+divider_wall_v5case_07,15,1.5,2,-2,5,False,0,,0,1,0,2,0,8.920894,-160.85
+divider_wall_v5case_08,16,1.5,-2,2,-5,False,0,,0,0,0,1,1,11.001008,-226.75
+divider_wall_v5case_09,17,2,3,0,3,False,0,,0,1,0,1,0,8.298984,-142.9
+divider_wall_v5case_10,18,2,-3,0,-3,False,0,,0,1,0,5,0,7.5768,-187.55

@@ -139,9 +139,16 @@ class DividerController(PreviousController):
         self.recent_diagonal=[250.0,250.0]
         self.startup_echoes=[]
         self.stable_echoes=False
+        self.wall_memory_side=None
+        self.wall_memory_angle=0.0
+        self.wall_memory_range=250.0
+        self.wall_memory_age=10.0
+        self.wall_follow_time=0.0
+        self.wall_follow_release=0.0
 
     def step(self,sensors,dt):
         previous_handle=self.handle
+        previous_accel=self.accel
         names=('Fr','FrLh','RrLh','FrRh','RrRh')
         valid=all(isinstance(sensors.get(n),(int,float)) and math.isfinite(sensors[n]) and 0<sensors[n]<=450 for n in names)
         if valid and len(self.startup_echoes)<6:
@@ -169,6 +176,29 @@ class DividerController(PreviousController):
         angle=math.degrees(math.atan(slope))
         clearance=sr-7*slope
         agrees=fr<240 and sr<150 and abs(angle)<self.guard_trust_deg and span>15
+        left_span=6+fl*root_half
+        left_slope=(fl*root_half-sl)/left_span
+        left_angle=math.degrees(math.atan(left_slope))
+        left_agrees=fl<240 and sl<150 and abs(left_angle)<self.guard_trust_deg and left_span>15
+        tracked_range = sr if self.wall_memory_side=='right' else sl
+        track_is_continuous = (self.wall_memory_side is not None and tracked_range<65 and
+                               abs(tracked_range-self.wall_memory_range)<5)
+        # Do not swap the tracked side on one apparent fit: a divider endpoint
+        # can make the opposite diagonal ray resemble a parallel wall.
+        if agrees and (self.wall_memory_side in (None,'right') or not track_is_continuous):
+            self.wall_memory_side='right';self.wall_memory_angle=angle
+            self.wall_memory_range=sr
+            self.wall_memory_age=0.0
+        elif left_agrees and (self.wall_memory_side in (None,'left') or not track_is_continuous):
+            self.wall_memory_side='left';self.wall_memory_angle=left_angle
+            self.wall_memory_range=sl
+            self.wall_memory_age=0.0
+        elif track_is_continuous:
+            self.wall_memory_range=tracked_range
+            self.wall_memory_age=0.0
+        else:
+            self.wall_memory_age+=dt
+        self.wall_follow_time=(self.wall_follow_time+dt if track_is_continuous and tracked_range<35 else 0.0)
         corridor=sl<80 and sr<80 and fl<180 and fr<180 and f>180
         if self.turn or not agrees or f<150:
             self.guard_active=False
@@ -187,14 +217,36 @@ class DividerController(PreviousController):
         self.recent_diagonal=[left,right]
         # Start lateral escape and braking before the endpoint reaches the body.
         if min(left,right)<45 and sl<100 and sr<100:
-            desired=70 if right<left else -70
-            self.handle=previous_handle+max(-140*dt,min(140*dt,desired-previous_handle))
-            handle=self.handle
-            cap,gain=(14,0.45) if self.stable_echoes else (14,.45)
-            target=max(4,min(cap,(min(left,right)-12)*gain))
-            self.accel=min(self.accel,target)
-            accel=self.accel
-            state='仕切り壁回避：斜め接近を保持して減速'
+            memory_side_range=sensors['RrRh'] if self.wall_memory_side=='right' else sensors['RrLh']
+            wall_opposite_obstacle=(left<right if self.wall_memory_side=='right' else right<left)
+            continuous_wall=(self.wall_memory_side is not None and self.wall_memory_age<=.35 and
+                             self.wall_follow_time>=.3 and memory_side_range<37 and
+                             abs(memory_side_range-self.wall_memory_range)<20)
+            if continuous_wall and wall_opposite_obstacle and not self.turn and sensors['Fr']>110:
+                # The diagonal ray has lost the already confirmed parallel wall,
+                # while its side echo and the front ray show that the lane stays open.
+                # Keep following that wall instead of braking for the opposite divider.
+                if self.wall_memory_side=='right':
+                    demand=-2.5*self.wall_memory_angle-.3*(sr-25)
+                else:
+                    demand=2.5*self.wall_memory_angle+.3*(sl-25)
+                self.handle+=clamp(demand-self.handle,-100*dt,100*dt)
+                handle=self.handle
+                self.accel=previous_accel
+                accel=previous_accel
+                self.wall_follow_release=.5
+                state='仕切り壁回避：平行壁追従・速度維持'
+            else:
+                self.wall_follow_release=max(0.0,self.wall_follow_release-dt)
+                desired=70 if right<left else -70
+                self.handle=previous_handle+max(-140*dt,min(140*dt,desired-previous_handle))
+                handle=self.handle
+                target=max(4,min(14,(min(left,right)-12)*.45))
+                self.accel=min(self.accel,target)
+                accel=self.accel
+                state='仕切り壁回避：斜め接近を保持して減速'
+        else:
+            self.wall_follow_release=max(0.0,self.wall_follow_release-dt)
         return accel,handle,state
 
 
@@ -354,6 +406,9 @@ class Controller(GapController):
             return accel,desired,state
         urgent=(sensors['Fr']<90 or min(sensors['FrLh'],sensors['FrRh'])<25 or
                 min(sensors['RrLh'],sensors['RrRh'])<15)
+        if self.wall_follow_release>0 and not urgent:
+            accel=min(accel,35)
+            self.accel=accel
         if urgent:
             self.output_rate=(desired-self.output_handle)/dt
             self.output_handle=desired;self.profile_target=desired
