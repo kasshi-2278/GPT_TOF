@@ -1,0 +1,16 @@
+{
+  "slowdown": {
+    "penalty_points_per_cm_s_speed_drop": 0.02,
+    "min_sample_drop_cm_s": 0.3,
+    "emergency_front_cm": 60,
+    "emergency_diagonal_cm": 18,
+    "emergency_side_cm": 12,
+    "sample_interval_s": 0.05,
+    "penalty": "0.02 points per cm/s speed drop above 0.3 cm/s per 0.05-second sample; no penalty inside the emergency-proximity envelope."
+  },
+  "time_bonus": {
+    "reference_three_lap_seconds": 600,
+    "points_per_second": 1,
+    "formula": "max(0, 600 - three-lap total seconds); only collision-free completion without program error."
+  }
+}

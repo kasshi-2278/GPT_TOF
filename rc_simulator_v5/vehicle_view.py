@@ -37,7 +37,7 @@ class VehicleView:
         self.app=app
         self.window=tk.Toplevel(app.root)
         self.window.title('超音波センサー・進行判断')
-        self.window.geometry('900x630');self.window.minsize(650,430)
+        self.window.geometry('700x540+20+50');self.window.minsize(650,430)
         self.window.protocol('WM_DELETE_WINDOW',self.close)
         self.window.bind('<KeyPress>',app.key_down)
         self.window.bind('<KeyRelease>',lambda e:app.keys.discard(e.keysym.lower()))
@@ -45,42 +45,51 @@ class VehicleView:
         self.info=tk.StringVar()
         tk.Label(self.window,textvariable=self.info,anchor='w',bg='#142337',fg='white',
                  font=(app.family,11),padx=12,pady=8).pack(fill='x')
-        self.tabs=ttk.Notebook(self.window);self.tabs.pack(fill='both',expand=True,padx=6,pady=6)
-        self.sonar=tk.Canvas(self.tabs,bg='#142337',highlightthickness=0)
-        self.tabs.add(self.sonar,text='超音波５方向・判断')
-        self.mapping=tk.Frame(self.tabs)
+        self.sonar=tk.Canvas(self.window,bg='#142337',highlightthickness=0)
+        self.sonar.pack(fill='both',expand=True,padx=6,pady=6)
+        self.map_window=tk.Toplevel(app.root)
+        self.map_window.title('超音波マッピング')
+        self.map_window.geometry('700x540+720+50');self.map_window.minsize(650,430)
+        self.map_window.protocol('WM_DELETE_WINDOW',self.close)
+        self.map_window.bind('<KeyPress>',app.key_down)
+        self.map_window.bind('<KeyRelease>',lambda e:app.keys.discard(e.keysym.lower()))
+        self.map_window.bind('<FocusOut>',lambda e:app.keys.clear())
+        self.mapping=tk.Frame(self.map_window)
+        self.mapping.pack(fill='both',expand=True)
         tools=tk.Frame(self.mapping);tools.pack(fill='x')
         tk.Button(tools,text='検出点を消去',command=self.clear_map).pack(side='left',padx=5,pady=3)
         tk.Button(tools,text='検出点をCSV保存',command=self.save_map).pack(side='left',padx=5,pady=3)
         self.map_canvas=tk.Canvas(self.mapping,bg='#142337',highlightthickness=0)
         self.map_canvas.pack(fill='both',expand=True)
-        self.tabs.add(self.mapping,text='障害物マッピング')
         self.note=tk.StringVar()
         tk.Label(self.window,textvariable=self.note,anchor='w',font=(app.family,9),
                  padx=10,pady=5).pack(fill='x')
-        self.cache=None;self.after_id=None
-        self.tabs.bind('<<NotebookTabChanged>>',lambda e:setattr(self,'cache',None))
+        self.map_note=tk.StringVar()
+        tk.Label(self.map_window,textvariable=self.map_note,anchor='w',font=(app.family,9),
+                 padx=10,pady=5).pack(fill='x')
+        self.cache=None;self.after_id=None;self.map_cache=None
         self.refresh()
 
     def close(self):
         if self.after_id is not None:
             self.window.after_cancel(self.after_id);self.after_id=None
         if self.window.winfo_exists():self.window.destroy()
+        if self.map_window.winfo_exists():self.map_window.destroy()
         if self.app.vehicle_view is self:self.app.vehicle_view=None
 
     def refresh(self):
         if self.app.closed or not self.window.winfo_exists():return
         sim=self.app.sim;car=sim.car
         self.info.set(f'{sim.time:.2f} s　速度 {car.speed:.1f} cm/s　操舵 {car.steer:+.1f}°　走行判断：超音波５方向')
-        selected=self.tabs.select()
         self.app.sonar_map.sample(sim)
-        canvas=self.sonar if selected==str(self.sonar) else self.map_canvas
         signature=(id(sim.world),len(sim.world.ray_edges),sim.time,car.x,car.y,car.heading,
-                   selected,canvas.winfo_width(),canvas.winfo_height(),tuple(sim.sensors.items()))
+                   self.sonar.winfo_width(),self.sonar.winfo_height(),tuple(sim.sensors.items()))
         if signature!=self.cache:
-            self.cache=signature
-            if canvas is self.sonar:self.draw_sonar(sim)
-            else:self.draw_map(sim)
+            self.cache=signature;self.draw_sonar(sim)
+        map_signature=(id(sim.world),len(self.app.sonar_map.points),sim.time,car.x,car.y,car.heading,
+                       self.map_canvas.winfo_width(),self.map_canvas.winfo_height())
+        if map_signature!=self.map_cache:
+            self.map_cache=map_signature;self.draw_map(sim)
         self.after_id=self.window.after(100,self.refresh)
 
     def draw_sonar(self,sim):
@@ -116,7 +125,7 @@ class VehicleView:
         self.note.set('色の線：５つの測距値（150cmまで）　緑矢印：目標方向　緑の帯：FTG選択領域（未観測部分あり）　白点線：操舵指令')
 
     def clear_map(self):
-        self.app.sonar_map.clear();self.cache=None
+        self.app.sonar_map.clear();self.map_cache=None
 
     def save_map(self):
         from tkinter import filedialog
@@ -156,7 +165,7 @@ class VehicleView:
         cv.create_text(12,15,anchor='w',text=f'検出点 {len(model.points):,} / 30,000　格子100 cm　最大距離の値は除外',fill='white')
         for i,name in enumerate(COLORS):
             cv.create_text(12+i*105,h-15,anchor='w',text='● '+LABELS[name],fill=COLORS[name])
-        self.note.set('測距値＋表示専用の車体位置・向き。コースの壁座標は使いません。点は反射方向の推定です。')
+        self.map_note.set('測距値＋表示専用の車体位置・向き。コースの壁座標は使いません。点は反射方向の推定です。')
 
     def draw_decision(self,cv,sim,screen):
         """Read output telemetry; never infer a target from map geometry."""

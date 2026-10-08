@@ -165,7 +165,7 @@ class App:
         label('time'); label('position')
         heading('LAP TIMES / ３周')
         label('lap_times')
-        heading('SCORE / 完走加点')
+        heading('SCORE / 加点・減速減点')
         label('straight')
         heading('ULTRASONIC  /  cm')
         for name in ['Fr','FrLh','RrLh','FrRh','RrRh']:
@@ -493,7 +493,8 @@ class App:
         bonus=STRAIGHT_RULES['max_bonus']*fraction if self.lap_timer.completed else 0
         speed_bonus=time_bonus(self.lap_timer.completed,self.lap_timer.total_time,
                               int(bool(s.collision_id)),s.program_error)
-        v['straight'].set(f'直進 {fraction*100:.1f}%  +{bonus:.2f} 点\n周回時間 +{speed_bonus:.2f} 点'+('' if self.lap_timer.completed else '\n加点は３周完走時'))
+        slowdown=self.straight_summary.get('slowdown_penalty',0.0)
+        v['straight'].set(f'直進 {fraction*100:.1f}%  +{bonus:.2f} 点\n減速 −{slowdown:.2f} 点　周回時間 +{speed_bonus:.2f} 点'+('' if self.lap_timer.completed else '\n完走時に加点'))
         for name in SENSOR_COLORS: v[name].set(f'{s.sensors.get(name,0):6.1f}')
         v['commands'].set(f'Accel {c.accel:+6.1f}     Handle {c.handle:+6.1f}')
         v['motion'].set(f'速度 {c.speed:5.1f} cm/s   操舵 {c.steer:+5.1f}°')
@@ -568,7 +569,7 @@ class App:
 
     def show_vehicle_view(self):
         if self.vehicle_view is not None and self.vehicle_view.window.winfo_exists():
-            self.vehicle_view.window.lift();return
+            self.vehicle_view.window.lift();self.vehicle_view.map_window.lift();return
         self.vehicle_view=VehicleView(self)
 
     def show_program_log(self):
