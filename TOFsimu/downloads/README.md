@@ -5,11 +5,16 @@
 - [プログラムと使い方のZIP](TOFsimu_program_log_on_stop.zip)
 - [Pythonプログラム単体](sonic_drive_v23_log_on_stop.py)
 
-ラズパイでZIPを解凍し、プログラムのあるフォルダをターミナルで開いて `python3 sonic_drive_v23_log_on_stop.py` を実行します。Enterで走行開始、Ctrl+Cで停止します。停止後、走行時のTXTログが起動した作業フォルダに保存され、ファイルの絶対パスが端末に表示されます。そのTXTを `log_viewer.html` に読み込むと、センサー値と走行判断を図で確認できます。
+ラズパイでZIPを解凍し、プログラムのあるフォルダをターミナルで開いて `python3 sonic_drive_v23_log_on_stop.py` を実行します。Enterで走行開始、Ctrl+Cで停止します。停止後、起動した作業フォルダに2つのファイルが保存され、端末に絶対パスが表示されます。
+
+- `drive_trace_日時.jsonl`: 全制御周期のセンサー値、判断コメント・内部値、操舵/スロットルPWM指令、前進/後退パルス、周期時間。修正分析にはこのファイルをチャットに添付してください。
+- `drive_log_日時.txt`: 全周期の人が読めるログ。`log_viewer.html` に読み込むとセンサーと走行判断を図示できます。
+
+実機の車体位置・角度を測るセンサーはないため、位置の軌跡は記録されません。ログには、開始時刻、実行プログラムのSHA256、センサー順序・ピン、PWM設定も記録されます。
 
 この版は保存してある元v23の実機コードにログ保存だけを追加しています。GPIO/PWM、センサー、走行判断の初期設定は変更していません。実機での走行は未検証です。
 
 SHA256:
 
-- ZIP: `efc369ccffd6b4717eece3f1cb524fbf08a440ce3f0da00b3650f39345341a5c`
-- Python: `1ccabdddf99810cbda0e5de1c43f60d61a18cd50670e0d0b1f602859e4158c8c`
+- ZIP: `31709be2abedfacbfd2c9f5e452a33bd81bc6bd10892db6f9d8c144f48241ce9`
+- Python: `7f33023e9b374fe07ccbbe907d36e8e60455e028600109c8896467e719c55ccf`

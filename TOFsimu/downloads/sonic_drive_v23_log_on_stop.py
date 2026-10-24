@@ -5,9 +5,12 @@
 通常アクセル指令30。
 GPIO/PWM初期設定・測距・実機入出力は元と同じ。
 実機ではCtrl+Cで停止した後、走行中の測距・指令ログをUTF-8のTXTに保存する。
+全制御周期の判断・出力PWMは、同じ走行IDのJSONLにも記録する。
 車体モデルは仮値。実機の走行・復帰は未検証。
 """
 
+import hashlib
+import json
 import math
 import datetime
 import os
@@ -862,6 +865,8 @@ def main():
     last_comment = None
     log_file = None
     log_path = None
+    trace_file = None
+    trace_path = None
     log_records = 0
     stop_reason = '走行開始前に終了'
     run_started = None
@@ -870,15 +875,59 @@ def main():
         input('Press Enter to start...')
         if not hasattr(GPIO, 'runner'):
             started_at = datetime.datetime.now()
-            log_name = 'drive_log_{}.txt'.format(started_at.strftime('%Y%m%d_%H%M%S_%f'))
-            log_path = os.path.abspath(os.path.join(os.getcwd(), log_name))
+            run_stamp = started_at.strftime('%Y%m%d_%H%M%S_%f')
+            log_path = os.path.abspath(os.path.join(
+                os.getcwd(), 'drive_log_{}.txt'.format(run_stamp)))
+            trace_path = os.path.abspath(os.path.join(
+                os.getcwd(), 'drive_trace_{}.jsonl'.format(run_stamp)))
             log_file = open(log_path, 'w', encoding='utf-8')
+            trace_file = open(trace_path, 'w', encoding='utf-8')
             log_file.write('走行ログ開始: {}\n'.format(started_at.isoformat(timespec='seconds')))
-            log_file.write('5センサー・操舵・アクセル・制御判断（記録順）\n')
+            log_file.write('5センサー・制御判断・出力PWM（全制御周期）\n')
             log_file.flush()
+            with open(__file__, 'rb') as program_file:
+                program_sha256 = hashlib.sha256(program_file.read()).hexdigest()
+            start_record = {
+                'type': 'start',
+                'schema_version': 1,
+                'run_id': run_stamp,
+                'started_at': started_at.isoformat(timespec='milliseconds'),
+                'program_path': os.path.abspath(__file__),
+                'program_sha256': program_sha256,
+                'sensor_order': ['Fr', 'FrLh', 'FrRh', 'RrLh', 'RrRh'],
+                'sensor_pins': {
+                    'Fr': {'trig': 15, 'echo': 33},
+                    'FrLh': {'trig': 13, 'echo': 40},
+                    'FrRh': {'trig': 32, 'echo': 31},
+                    'RrLh': {'trig': 35, 'echo': 37},
+                    'RrRh': {'trig': 36, 'echo': 38},
+                },
+                'sensor_unit': 'cm',
+                'clock': 'elapsed_s and dt_s use time.monotonic()',
+                'controller': type(controller).__name__,
+                'controller_parameters': dict(getattr(controller, 'params', {})),
+                'pwm': {
+                    'frequency_hz': 60,
+                    'steering': {
+                        'channel': STEERING_CHANNEL,
+                        'right': STEERING_RIGHT_PWM,
+                        'center': STEERING_CENTER_PWM,
+                        'left': STEERING_LEFT_PWM,
+                    },
+                    'throttle': {
+                        'channel': THROTTLE_CHANNEL,
+                        'forward': THROTTLE_FORWARD_PWM,
+                        'stopped': THROTTLE_STOPPED_PWM,
+                        'reverse': THROTTLE_REVERSE_PWM,
+                    },
+                },
+            }
+            trace_file.write(json.dumps(start_record, ensure_ascii=False) + '\n')
+            trace_file.flush()
         t = time.monotonic()
         run_started = t
         stop_reason = '停止理由不明'
+        iteration = 0
 
         while True:
             Fr   = Mesure(GPIO,time,15,33)
@@ -894,6 +943,7 @@ def main():
             Accel, Handle, comment = controller.update(
                 Fr, FrLh, FrRh, RrLh, RrRh, dt
             )
+            decision_elapsed = time.monotonic() - run_started
 
             # ステアリングPWM換算：元プログラムと同じ
             if Handle <= 0:
@@ -904,53 +954,135 @@ def main():
                 pwm.set_pwm(STEERING_CHANNEL, 0, steer_pwm)
 
             # スロットルPWM換算：元プログラムと同じ
+            throttle_events = []
             if Accel > 0:
                 throttle_pwm = int(THROTTLE_STOPPED_PWM + (THROTTLE_FORWARD_PWM - THROTTLE_STOPPED_PWM) * Accel / 100)
                 pwm.set_pwm(THROTTLE_CHANNEL, 0, throttle_pwm)
+                throttle_phase = 'forward'
+                throttle_events.append({
+                    'phase': throttle_phase,
+                    'pwm_off': throttle_pwm,
+                    'duration_s': None,
+                    'ends_at_next_update': True,
+                })
                 reverse_ready = False
 
             elif Accel == 0:
                 pwm.set_pwm(THROTTLE_CHANNEL, 0, THROTTLE_STOPPED_PWM)
+                throttle_pwm = THROTTLE_STOPPED_PWM
+                throttle_phase = 'neutral'
+                throttle_events.append({
+                    'phase': throttle_phase,
+                    'pwm_off': throttle_pwm,
+                    'duration_s': 0.01,
+                })
                 time.sleep(0.01)
 
             else:
+                throttle_phase = 'reverse'
                 throttle_pwm = int(THROTTLE_STOPPED_PWM + (THROTTLE_STOPPED_PWM - THROTTLE_REVERSE_PWM) * Accel / 100)
 
                 if not reverse_ready:
                     # 初回はブレーキ→ニュートラル。
                     pwm.set_pwm(THROTTLE_CHANNEL, 0, throttle_pwm)
+                    throttle_events.append({
+                        'phase': 'brake',
+                        'pwm_off': throttle_pwm,
+                        'duration_s': BRAKE_SECONDS,
+                    })
                     time.sleep(BRAKE_SECONDS)
                     pwm.set_pwm(THROTTLE_CHANNEL, 0, THROTTLE_STOPPED_PWM)
+                    throttle_events.append({
+                        'phase': 'neutral_before_reverse',
+                        'pwm_off': THROTTLE_STOPPED_PWM,
+                        'duration_s': REVERSE_NEUTRAL_SECONDS,
+                    })
                     time.sleep(REVERSE_NEUTRAL_SECONDS)
                     reverse_ready = True
 
                 # 短く後退して、再測距前にニュートラルへ。
                 pwm.set_pwm(THROTTLE_CHANNEL, 0, throttle_pwm)
+                throttle_events.append({
+                    'phase': 'reverse_pulse',
+                    'pwm_off': throttle_pwm,
+                    'duration_s': REVERSE_PULSE_SECONDS,
+                })
                 time.sleep(REVERSE_PULSE_SECONDS)
                 pwm.set_pwm(THROTTLE_CHANNEL, 0, THROTTLE_STOPPED_PWM)
+                throttle_events.append({
+                    'phase': 'neutral_after_reverse',
+                    'pwm_off': THROTTLE_STOPPED_PWM,
+                    'duration_s': REVERSE_NEUTRAL_SECONDS,
+                })
                 time.sleep(REVERSE_NEUTRAL_SECONDS)
 
+            record = [
+                'Fr:{:.0f}  FrLh:{:.0f}  FrRh:{:.0f}  RrLh:{:.0f}  RrRh:{:.0f}'
+                .format(Fr, FrLh, FrRh, RrLh, RrRh),
+                '{}  ハンドル={:+.1f}  アクセル={:.1f}  周期={:.3f}s  P={:+.1f} D={:+.1f} C={:.2f}'
+                .format(comment, Handle, Accel, dt,
+                        controller.debug['p'], controller.debug['d'], controller.debug['corner']),
+                'Gap={}  PP={:+.1f}  目標距離={:.0f}cm'
+                .format(controller.debug['gap'], controller.debug['pp'],
+                        controller.debug['lookahead_cm']),
+                '狭路={} 側方連続={} 安全判定={}'.format(
+                    controller.debug['narrow'], controller.debug['side_close_count'],
+                    controller.debug['safety_reason']),
+            ]
+
+            if log_file is not None:
+                for line in record:
+                    log_file.write(line + '\n')
+
+                trace_record = {
+                    'type': 'cycle',
+                    'index': iteration + 1,
+                    'timestamp': datetime.datetime.now().isoformat(timespec='milliseconds'),
+                    'elapsed_s': round(decision_elapsed, 6),
+                    'dt_s': round(dt, 6),
+                    'sensor_cm': {
+                        'Fr': Fr,
+                        'FrLh': FrLh,
+                        'FrRh': FrRh,
+                        'RrLh': RrLh,
+                        'RrRh': RrRh,
+                    },
+                    'decision': {
+                        'comment': comment,
+                        'handle': Handle,
+                        'accel': Accel,
+                        'controller_debug': dict(controller.debug),
+                    },
+                    'actuators': {
+                        'steering': {
+                            'channel': STEERING_CHANNEL,
+                            'pwm_off': steer_pwm,
+                        },
+                        'throttle': {
+                            'channel': THROTTLE_CHANNEL,
+                            'pwm_off_after_cycle': (
+                                THROTTLE_STOPPED_PWM if Accel < 0 else throttle_pwm
+                            ),
+                            'requested_pwm': throttle_pwm,
+                            'phase': throttle_phase,
+                            'events': throttle_events,
+                        },
+                        'reverse_ready_after_cycle': reverse_ready,
+                    },
+                }
+                trace_file.write(json.dumps(
+                    trace_record, ensure_ascii=False, separators=(',', ':')
+                ) + '\n')
+                if (iteration + 1) % 10 == 0:
+                    log_file.flush()
+                    trace_file.flush()
+
+            iteration += 1
+            log_records = iteration
+
             if now - last_log >= LOG_INTERVAL_SECONDS or comment != last_comment:
-                record = [
-                    'Fr:{:.0f}  FrLh:{:.0f}  FrRh:{:.0f}  RrLh:{:.0f}  RrRh:{:.0f}'
-                    .format(Fr, FrLh, FrRh, RrLh, RrRh),
-                    '{}  ハンドル={:+.1f}  アクセル={:.1f}  周期={:.3f}s  P={:+.1f} D={:+.1f} C={:.2f}'
-                    .format(comment, Handle, Accel, dt,
-                            controller.debug['p'], controller.debug['d'], controller.debug['corner']),
-                    'Gap={}  PP={:+.1f}  目標距離={:.0f}cm'
-                    .format(controller.debug['gap'], controller.debug['pp'],
-                            controller.debug['lookahead_cm']),
-                    '狭路={} 側方連続={} 安全判定={}'.format(
-                        controller.debug['narrow'], controller.debug['side_close_count'],
-                        controller.debug['safety_reason']),
-                ]
                 for line in record:
                     print(line)
-                    if log_file is not None:
-                        log_file.write(line + '\n')
-                if log_file is not None:
-                    log_file.flush()
-                log_records += 1
                 last_log = now
                 last_comment = comment
 
@@ -976,12 +1108,31 @@ def main():
                         try:
                             log_file.write('\n走行停止: {}\n'.format(stop_reason))
                             log_file.write('走行時間: {:.2f}s\n'.format(elapsed))
-                            log_file.write('ログ記録数: {}\n'.format(log_records))
+                            log_file.write('全制御周期数: {}\n'.format(log_records))
                             log_file.flush()
                         finally:
                             log_file.close()
+                        if trace_file is not None:
+                            end_record = {
+                                'type': 'stop',
+                                'timestamp': datetime.datetime.now().isoformat(timespec='milliseconds'),
+                                'elapsed_s': round(elapsed, 6),
+                                'reason': stop_reason,
+                                'cycles': log_records,
+                                'final_outputs': {
+                                    'throttle_pwm': THROTTLE_STOPPED_PWM,
+                                    'steering_pwm': STEERING_CENTER_PWM,
+                                },
+                            }
+                            try:
+                                trace_file.write(json.dumps(end_record, ensure_ascii=False) + '\n')
+                                trace_file.flush()
+                            finally:
+                                trace_file.close()
                         print('走行ログを保存しました: {}'.format(log_path))
-                        print('ログ記録数: {}'.format(log_records))
+                        if trace_path is not None:
+                            print('詳細トレースを保存しました: {}'.format(trace_path))
+                        print('全制御周期数: {}'.format(log_records))
 
 
 if __name__ == '__main__':
