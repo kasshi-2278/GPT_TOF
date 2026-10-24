@@ -756,7 +756,7 @@ _ForwardDriveController = SmoothDriveController
 class SmoothDriveController(_ForwardDriveController):
     """近接時に短く後退し、余裕を確認して前進へ復帰する。"""
 
-    MAX_RECOVERY_PULSES = 5
+    MAX_RECOVERY_PULSES = 60
 
     def __init__(self):
         super().__init__()
@@ -764,6 +764,8 @@ class SmoothDriveController(_ForwardDriveController):
         self._recovery_wait = False
         self._clear_scans = 0
         self._forward_seconds = 0.0
+        self._reverse_handle = 0.0
+        self._resume_guard = 0.0
 
     def update(self, Fr, FrLh, FrRh, RrLh, RrRh, dt):
         try:
@@ -787,13 +789,17 @@ class SmoothDriveController(_ForwardDriveController):
                 Fr, FrLh, FrRh, RrLh, RrRh, dt
             )
 
+        right_min = min(raw[2], raw[4])
+        left_min = min(raw[1], raw[3])
         near = (
-            raw[0] < 16
-            or min(raw[1:3]) < 12
+            raw[0] < 35
+            or (raw[2] < 35 and right_min <= left_min)
+            or (raw[1] < 35 and right_min > left_min)
             or min(raw[3:]) < 8
         )
         released = (
-            raw[0] >= 24
+            not near
+            and raw[0] >= 45
             and min(raw[1:3]) >= 18
             and min(raw[3:]) >= 12
         )
@@ -833,6 +839,17 @@ class SmoothDriveController(_ForwardDriveController):
             return self._reverse_step(raw)
 
         if accel > 0:
+            # 後退から戻った直後に、同じ近接箇所へ切り込み直さない。
+            if self._resume_guard > 0:
+                escape_handle = -self._reverse_handle / 2
+                escape_range = raw[2] if escape_handle < 0 else raw[1]
+                if escape_range > 35 and raw[0] >= 45:
+                    handle = escape_handle
+                    self._handle = handle
+                    comment = "後退復帰：接近側を避けて前進"
+                self._resume_guard = max(0.0, self._resume_guard - elapsed)
+                self.debug.update(recovery_forward_guard=self._resume_guard,
+                                  recovery_escape_handle=handle)
             self._forward_seconds += elapsed
 
             # 前進が1秒続いたら後退回数をリセット。
@@ -859,33 +876,41 @@ class SmoothDriveController(_ForwardDriveController):
 
         if self._recovery_pulses >= self.MAX_RECOVERY_PULSES:
             return self._recovery_stop(
-                "後退5回で改善なし：手動確認"
+                "後退{}回で復帰余裕なし：手動確認".format(self.MAX_RECOVERY_PULSES)
             )
 
-        # 側面が近い場合は直進後退。
-        handle = 0.0
-
-        # 側方に余裕がある場合だけ小さく舵を付け、
-        # 後退で車首を近い前方障害物の反対側へ向ける。
-        if min(raw[3:]) >= 18:
-            if raw[1] + 5 < raw[2]:
-                handle = 20.0
-            elif raw[2] + 5 < raw[1]:
-                handle = -20.0
+        # 提示された右後退/左後退を、排他的な分岐で適用する。
+        # 正面だけが近い時にも左右の最短距離で決める（同距離は右）。
+        right_min = min(raw[2], raw[4])
+        left_min = min(raw[1], raw[3])
+        if right_min <= left_min:
+            handle = -40.0
+            side = "右"
+        else:
+            handle = 40.0
+            side = "左"
 
         # 前進用のフィルタ・旋回・壁端履歴を破棄。
         _ForwardDriveController.__init__(self)
 
         self._recovery_pulses += 1
         self._recovery_wait = True
+        self._reverse_handle = handle
+        self._resume_guard = 0.25
 
-        reason = "近接復帰：短く後退 {}/{}".format(
+        reason = "後退の{}旋回：短く後退 {}/{}".format(
+            side,
             self._recovery_pulses,
             self.MAX_RECOVERY_PULSES,
         )
         self.debug.update(
             safety_reason=reason,
             pp_applied=False,
+            recovery_side=side,
+            recovery_right_min_cm=right_min,
+            recovery_left_min_cm=left_min,
+            recovery_handle=handle,
+            recovery_pulses=self._recovery_pulses,
         )
 
         # mainの既存ESC後退手順を使用。
