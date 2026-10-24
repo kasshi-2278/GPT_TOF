@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """v23ログ起点の修正版: 斜め前回避・旋回反転・後退脱出を調整。
 
-通常アクセル指令30。
+直線の微小補正と、凹みを追わない壁基準を使用。通常アクセル指令60。
 GPIO/PWM初期設定・測距・実機入出力は元と同じ。
 実機ではCtrl+Cで停止した後、走行中の測距・指令ログをUTF-8のTXTに保存する。
 全制御周期の判断・出力PWMは、同じ走行IDのJSONLにも記録する。
@@ -26,6 +26,18 @@ def _clip(value, low, high):
     return max(low, min(high, value))
 
 
+def select_start_direction(ranges):
+    """前方3方向を比較。近い差なら正面、横は明確な差がある時だけ。"""
+    front, left, right = (float(v) for v in ranges[:3])
+    if not all(math.isfinite(v) and 0 < v <= 500 for v in (front, left, right)):
+        return dict(angle_deg=0.0, direction="測距を再確認", valid=False)
+    farthest = max(front, left, right)
+    if farthest - front <= max(30.0, farthest * .1):
+        return dict(angle_deg=0.0, direction="正面", valid=True)
+    angle, direction = (45.0, "左前方") if left >= right else (-45.0, "右前方")
+    return dict(angle_deg=angle, direction=direction, valid=True)
+
+
 class _WallReferenceController:
     """右壁基準の前進判断と壁端への切り込み抑制。"""
 
@@ -39,6 +51,9 @@ class _WallReferenceController:
         turn_start=100.0,
         turn_release=150.0,
         range_filter_tau=0.06,
+        straight_angle_gain=2.2,
+        straight_distance_gain=0.45,
+        straight_handle_limit=30.0,
         accel=60.0,
         fit_limit=55.0,
         max_handle=100.0,
@@ -60,6 +75,10 @@ class _WallReferenceController:
         self._edge_recent = 0.0
         self._turn_right = False
         self._follow_left = False
+        self._right_target = None
+        self._left_target = None
+        self._startup_elapsed = 0.0
+        self._start_preview = None
         self.debug = dict(
             p=0.0,
             d=0.0,
@@ -71,6 +90,10 @@ class _WallReferenceController:
             side_close_count=0,
             safety_reason="",
         )
+
+    def prepare_start(self, ranges):
+        self._start_preview = dict(ranges_cm=list(ranges), **select_start_direction(ranges))
+        return self._start_preview
 
     def update(self, Fr, FrLh, FrRh, RrLh, RrRh, dt):
         try:
@@ -88,6 +111,8 @@ class _WallReferenceController:
             self._edge_recent = 0.0
             self._turn_right = False
             self._follow_left = False
+            self._right_target = None
+            self._left_target = None
             self._filtered = None
             self._handle = 0.0
             self._turn = False
@@ -109,6 +134,9 @@ class _WallReferenceController:
         self.debug["safety_reason"] = ""
         step = min(dt, 0.1)
         p = self.params
+        self._startup_elapsed += step
+        start_choice = select_start_direction(raw)
+        startup_active = self._startup_elapsed <= 0.8
 
         if self._filtered is None:
             self._filtered = raw[:]
@@ -141,10 +169,9 @@ class _WallReferenceController:
                 p["angle_gain"] * angle
                 + p["distance_gain"] * (p["target"] - clearance)
             )
-        elif sr < 200:
-            demand = p["distance_gain"] * (p["target"] - (sr + 9))
         else:
-            demand = -60.0
+            # 壁が見えないことを旋回の指示にしない。
+            demand = -60.0 if self._edge_recent > 0 and sr > 200 else 0.0
 
         # 右の凹みを追いかけず、左壁基準を使う。
         left_ray = fl / math.sqrt(2)
@@ -161,13 +188,17 @@ class _WallReferenceController:
                 self._follow_left = False
         elif (
             left_reliable
-            and abs(left_angle) < 20
+            and abs(left_angle) < 15
             and front > 160
-            and sl > 80.0
-            and sr < 95
-            and ray > sr + 15
+            and sr < 160
+            and ((sl > 80 and ray > sr + 15) or sr > sl + 30)
         ):
             self._follow_left = True
+            # 凹みの幅を追わず、切替直前の左壁との間隔を保つ。
+            self._left_target = _clip(
+                (9 + sl - 14 * left_slope) / math.sqrt(1 + left_slope * left_slope),
+                40.0, 80.0,
+            )
 
         if self._follow_left:
             left_clearance = (
@@ -176,8 +207,34 @@ class _WallReferenceController:
             )
             demand = (
                 p["angle_gain"] * left_angle
-                + p["distance_gain"] * (left_clearance - 69.0)
+                + p["distance_gain"] * (left_clearance - self._left_target)
             )
+
+        straight = front > 160 and not self._turn
+        reference_angle = left_angle if self._follow_left else angle
+        reference_valid = left_reliable if self._follow_left else reliable
+        if straight and reference_valid:
+            if not self._follow_left and self._right_target is None and abs(angle) < 12:
+                self._right_target = p["target"]
+            distance_error = (
+                left_clearance - self._left_target if self._follow_left
+                else (self._right_target if self._right_target is not None else p["target"]) - clearance
+            )
+            # 小さな測距差で左右へ切り返さない。向きの補正を主に使う。
+            a = math.copysign(max(0.0, abs(reference_angle) - 2.0), reference_angle)
+            e = math.copysign(max(0.0, abs(distance_error) - 3.0), distance_error)
+            demand = _clip(p["straight_angle_gain"] * a + p["straight_distance_gain"] * e,
+                           -p["straight_handle_limit"], p["straight_handle_limit"])
+        self.debug.update(straight=straight, wall_fit_valid=reference_valid,
+                          wall_angle_deg=reference_angle,
+                          right_target_cm=self._right_target, left_target_cm=self._left_target)
+        # 発進直後も直前の測距で方向を選び直す。待機前の値だけで発進しない。
+        if startup_active and front > 120 and min(raw[1:3]) > 35 and min(raw[3:]) > 25:
+            if start_choice["angle_deg"]:
+                demand = math.copysign(25.0, start_choice["angle_deg"])
+            elif reference_valid and abs(reference_angle) < 12:
+                demand = 0.0
+        self.debug.update(startup_active=startup_active, startup_choice=start_choice)
 
         # 右壁の先端への早すぎる切り込みを抑える。
         self._edge_recent = max(0.0, self._edge_recent - step)
@@ -185,8 +242,8 @@ class _WallReferenceController:
             not self._turn
             and not self._follow_left
             and front > 100
-            and 15 < sr < 50.0
-            and fr > max(150.0, 4 * sr)
+            and 15 < sr < 80.0
+            and fr > max(150.0, 3 * sr)
         )
         self._edge_confirm = (
             self._edge_confirm + 1 if edge_candidate else 0
@@ -238,6 +295,8 @@ class _WallReferenceController:
                     or (sr > 150 and self._handle < 0)
                 )
             )
+            if startup_active and start_choice["angle_deg"]:
+                self._turn_right = start_choice["angle_deg"] < 0
 
         if self._turn:
             self._turn_elapsed += step
@@ -248,6 +307,7 @@ class _WallReferenceController:
             )
             if self._turn_elapsed >= 0.12 and self._turn_release_scans >= 2:
                 self._turn = False
+                self._right_target = None
                 self._turn_reason = None
                 self._turn_elapsed = 0.0
                 self._turn_release_scans = 0
@@ -273,7 +333,7 @@ class _WallReferenceController:
             p["rate"] * step,
         )
 
-        # 狭路では操舵による減速を掛けず、指令30を維持。
+        # 狭路では操舵による減速を掛けず、通常指令を維持。
         narrow = (
             raw[0] >= 90.0
             and min(raw[1:3]) >= 25.0
@@ -897,6 +957,18 @@ def main():
     run_started = None
 
     try:
+        # GPIO/PWM設定を変えず、停止したまま3回の測距の中央値を表示する。
+        startup_scans = []
+        for _ in range(3):
+            startup_scans.append([
+                Mesure(GPIO,time,15,33), Mesure(GPIO,time,13,40),
+                Mesure(GPIO,time,32,31), Mesure(GPIO,time,35,37),
+                Mesure(GPIO,time,36,38),
+            ])
+        startup_ranges = [sorted(values)[1] for values in zip(*startup_scans)]
+        preview = controller.prepare_start(startup_ranges)
+        print('開始前測距(cm): Fr={:.0f} 左前={:.0f} 右前={:.0f} 左側={:.0f} 右側={:.0f}'.format(*startup_ranges))
+        print('開始方向候補: {}（Enter後に再測距して判断）'.format(preview['direction']))
         input('Press Enter to start...')
         if not hasattr(GPIO, 'runner'):
             started_at = datetime.datetime.now()
@@ -931,6 +1003,7 @@ def main():
                 'clock': 'elapsed_s and dt_s use time.monotonic()',
                 'controller': type(controller).__name__,
                 'controller_parameters': dict(getattr(controller, 'params', {})),
+                'start_observation': preview,
                 'pwm': {
                     'frequency_hz': 60,
                     'steering': {
