@@ -38,9 +38,11 @@ class _WallReferenceController:
         distance_gain=1.1,
         turn_start=100.0,
         turn_release=150.0,
-        turn_reversal_rate=520.0,
+        turn_reversal_rate=260.0,
         turn_reversal_accel=35.0,
         diagonal_avoid_cm=75.0,
+        range_filter_tau=0.14,
+        turn_handle=45.0,
         accel=60.0,
         fit_limit=55.0,
         max_handle=100.0,
@@ -53,6 +55,12 @@ class _WallReferenceController:
         self._handle = 0.0
         self._turn = False
         self._turn_reason = None
+        self._turn_elapsed = 0.0
+        self._turn_release_scans = 0
+        self._turn_cooldown = 0.0
+        self._last_turn_right = None
+        self._right_diag_scans = 0
+        self._left_diag_scans = 0
         self._last_angle = 0.0
         self._edge_guard = False
         self._edge_confirm = 0
@@ -92,6 +100,12 @@ class _WallReferenceController:
             self._handle = 0.0
             self._turn = False
             self._turn_reason = None
+            self._turn_elapsed = 0.0
+            self._turn_release_scans = 0
+            self._turn_cooldown = 0.0
+            self._last_turn_right = None
+            self._right_diag_scans = 0
+            self._left_diag_scans = 0
             self.debug["safety_reason"] = "測距・周期異常：停止"
             return 0.0, 0.0, self.debug["safety_reason"]
 
@@ -106,18 +120,19 @@ class _WallReferenceController:
 
         self.debug["safety_reason"] = ""
         step = min(dt, 0.1)
+        p = self.params
 
         if self._filtered is None:
             self._filtered = raw[:]
 
-        alpha = 1 - math.exp(-step / 0.06)
+        self._turn_cooldown = max(0.0, self._turn_cooldown - step)
+        alpha = 1 - math.exp(-step / p["range_filter_tau"])
         self._filtered = [
             a + alpha * (b - a)
             for a, b in zip(self._filtered, raw)
         ]
         f, fl, fr, sl, sr = self._filtered
         front = min(f, raw[0])
-        p = self.params
 
         # 右斜め・右側方から右壁の向きと間隔を推定。
         ray = fr / math.sqrt(2)
@@ -215,15 +230,37 @@ class _WallReferenceController:
         )
 
         # 斜め前の接近を中央センサーより先に検知して避ける。
-        right_diagonal_close = (
-            raw[2] < p["diagonal_avoid_cm"]
-            and raw[2] + 15.0 < raw[1]
+        right_diagonal_candidate = (
+            fr < p["diagonal_avoid_cm"]
+            and fr + 15.0 < fl
             and front > 50.0
         )
-        left_diagonal_close = (
-            raw[1] < p["diagonal_avoid_cm"]
-            and raw[1] + 15.0 < raw[2]
+        left_diagonal_candidate = (
+            fl < p["diagonal_avoid_cm"]
+            and fl + 15.0 < fr
             and front > 50.0
+        )
+        self._right_diag_scans = (
+            self._right_diag_scans + 1 if right_diagonal_candidate else 0
+        )
+        self._left_diag_scans = (
+            self._left_diag_scans + 1 if left_diagonal_candidate else 0
+        )
+        right_diagonal_close = (
+            self._right_diag_scans >= 2
+            or (
+                raw[2] < 28.0
+                and raw[2] + 15.0 < raw[1]
+                and front > 50.0
+            )
+        )
+        left_diagonal_close = (
+            self._left_diag_scans >= 2
+            or (
+                raw[1] < 28.0
+                and raw[1] + 15.0 < raw[2]
+                and front > 50.0
+            )
         )
 
         early_left = (
@@ -233,6 +270,16 @@ class _WallReferenceController:
             and fr < 120
         )
 
+        opposite_turn_locked = (
+            self._turn_cooldown > 0.0
+            and self._last_turn_right is not None
+        )
+        if opposite_turn_locked:
+            if self._last_turn_right:
+                right_diagonal_close = right_diagonal_close and raw[2] < 28.0
+            else:
+                left_diagonal_close = left_diagonal_close and raw[1] < 28.0
+
         if (
             front < p["turn_start"]
             or early_left
@@ -240,6 +287,8 @@ class _WallReferenceController:
             or left_diagonal_close
         ) and not self._turn:
             self._turn = True
+            self._turn_elapsed = 0.0
+            self._turn_release_scans = 0
             if right_diagonal_close:
                 self._turn_right = False
                 self._turn_reason = "right_diagonal"
@@ -257,27 +306,38 @@ class _WallReferenceController:
                 self._turn_reason = "front_or_opening"
 
         if self._turn:
+            self._turn_elapsed += step
             if self._turn_reason == "right_diagonal":
-                turn_released = raw[2] > 120.0 and front > 80.0
+                turn_clear = fr > 125.0 and f > 80.0
             elif self._turn_reason == "left_diagonal":
-                turn_released = raw[1] > 120.0 and front > 80.0
+                turn_clear = fl > 125.0 and f > 80.0
             else:
-                turn_released = front > p["turn_release"]
+                turn_clear = f > p["turn_release"]
+            self._turn_release_scans = (
+                self._turn_release_scans + 1 if turn_clear else 0
+            )
+            turn_released = (
+                self._turn_elapsed >= 0.30
+                and self._turn_release_scans >= 3
+            )
             if turn_released:
+                self._last_turn_right = self._turn_right
+                self._turn_cooldown = 0.30
                 self._turn = False
                 self._turn_reason = None
 
         if self._turn:
             demand = (
-                -p["max_handle"]
+                -p["turn_handle"]
                 if self._turn_right
-                else p["max_handle"]
+                else p["turn_handle"]
             )
 
-        if right_diagonal_close:
-            demand = max(demand, 50.0)
-        elif left_diagonal_close:
-            demand = min(demand, -50.0)
+        if not self._turn:
+            if right_diagonal_close:
+                demand = max(demand, 50.0)
+            elif left_diagonal_close:
+                demand = min(demand, -50.0)
 
         demand = _clip(
             demand, -p["max_handle"], p["max_handle"]
@@ -317,6 +377,11 @@ class _WallReferenceController:
             d=angle,
             corner=float(self._turn),
             turn_reason=self._turn_reason or "none",
+            turn_elapsed=round(self._turn_elapsed, 3),
+            turn_release_scans=self._turn_release_scans,
+            turn_cooldown=round(self._turn_cooldown, 3),
+            right_diagonal_scans=self._right_diag_scans,
+            left_diagonal_scans=self._left_diag_scans,
             steering_reversal_pending=reversal_pending,
             steering_rate=steer_rate,
             pp=self._handle,
