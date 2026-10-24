@@ -20,6 +20,7 @@ BRAKE_SECONDS = 0.20
 REVERSE_NEUTRAL_SECONDS = 0.02
 REVERSE_PULSE_SECONDS = 0.12
 LOG_INTERVAL_SECONDS = 0.20
+PROGRAM_VERSION = 'v28_confirmed_turn_diagonal_recovery'
 
 
 def _clip(value, low, high):
@@ -50,6 +51,7 @@ class _WallReferenceController:
         distance_gain=1.1,
         turn_start=100.0,
         turn_release=150.0,
+        turn_confirm_scans=2,
         range_filter_tau=0.06,
         straight_angle_gain=2.2,
         straight_distance_gain=0.45,
@@ -68,6 +70,13 @@ class _WallReferenceController:
         self._turn_reason = None
         self._turn_elapsed = 0.0
         self._turn_release_scans = 0
+        self._turn_entry_scans = 0
+        self._turn_candidate = None
+        self._turn_exit_guard = 0.0
+        self._turn_unknown_scans = 0
+        self._opening_direction = None
+        self._opening_scans = 0
+        self._approach_scans = 0
         self._last_angle = 0.0
         self._edge_guard = False
         self._edge_confirm = 0
@@ -281,28 +290,59 @@ class _WallReferenceController:
             and fr < 120
         )
 
-        if (front < p["turn_start"] or early_left) and not self._turn:
+        # 340cmは最大レンジ/未検出でも出る。単独で「左が開いた」としない。
+        left_open = ((45 < raw[1] < 300 and raw[1] > raw[2] + 25)
+                     or (45 < raw[3] < 300 and raw[3] > raw[4] + 25))
+        right_open = ((45 < raw[2] < 300 and raw[2] > raw[1] + 25)
+                      or (45 < raw[4] < 300 and raw[4] > raw[3] + 25))
+        if raw[1] >= 300 and 100 < raw[2] < 300 and raw[2] > raw[0] + 35:
+            left_open, right_open = False, True
+        elif raw[2] >= 300 and 100 < raw[1] < 300 and raw[1] > raw[0] + 35:
+            left_open, right_open = True, False
+        if self._edge_recent > 0 and 100 < raw[2] < 300 and raw[2] > raw[0] + 35:
+            left_open, right_open = False, True
+        if self._edge_recent > 0 and raw[2] > max(100, raw[1] + 30) and 45 < raw[4] < 300:
+            left_open, right_open = False, True
+        candidate = "left" if left_open and not right_open else "right" if right_open and not left_open else None
+        wants_turn = raw[0] < p["turn_start"] or early_left
+        self._opening_scans = self._opening_scans + 1 if candidate and candidate == self._opening_direction else (1 if candidate else 0)
+        self._opening_direction = candidate
+        self._approach_scans = self._approach_scans + 1 if raw[0] < 160 else 0
+        if not self._turn:
+            self._turn_unknown_scans = self._turn_unknown_scans + 1 if wants_turn and candidate is None else 0
+            self._turn_entry_scans = self._turn_entry_scans + 1 if wants_turn and candidate == self._turn_candidate and candidate else (1 if wants_turn and candidate else 0)
+            self._turn_candidate = candidate if wants_turn else None
+            if candidate and self._opening_scans >= 2 and self._approach_scans >= 2:
+                self._turn_entry_scans = max(self._turn_entry_scans, p["turn_confirm_scans"])
+        self.debug.update(turn_candidate=self._turn_candidate or "unknown",
+                          turn_entry_scans=self._turn_entry_scans,
+                          left_open_confirmed=left_open, right_open_confirmed=right_open)
+        if wants_turn and not self._turn and self._turn_entry_scans < p["turn_confirm_scans"]:
+            if candidate:
+                self.debug.update(safety_reason="", p=self._handle, corner=0.0)
+                return p["accel"] * 0.5, self._handle, "旋回方向を連続確認：現在の舵を維持"
+            self._handle = 0.0
+            reason = "正面接近：旋回方向の根拠不足" if self._turn_unknown_scans >= 3 else "正面接近：旋回方向を再確認"
+            self.debug.update(safety_reason=reason, p=0.0, corner=0.0)
+            return 0.0, 0.0, reason
+
+        if wants_turn and not self._turn:
             self._turn = True
             self._turn_reason = (
                 "early_left_opening" if early_left else "front_close"
             )
             self._turn_elapsed = 0.0
             self._turn_release_scans = 0
-            self._turn_right = (
-                fr > 100
-                and (
-                    (self._edge_recent > 0 and fr > fl + 30)
-                    or (sr > 150 and self._handle < 0)
-                )
-            )
-            if startup_active and start_choice["angle_deg"]:
-                self._turn_right = start_choice["angle_deg"] < 0
+            self._turn_right = candidate == "right"
 
+        straight_exit = (raw[0] >= 300 and max(raw[1:3]) < 300
+                         and abs(raw[1] - raw[2]) < 20
+                         and max(raw[3:]) < 300 and abs(raw[3] - raw[4]) < 20)
         if self._turn:
             self._turn_elapsed += step
             self._turn_release_scans = (
                 self._turn_release_scans + 1
-                if front > p["turn_release"]
+                if (raw[0] if straight_exit else front) > p["turn_release"]
                 else 0
             )
             if self._turn_elapsed >= 0.12 and self._turn_release_scans >= 2:
@@ -311,6 +351,14 @@ class _WallReferenceController:
                 self._turn_reason = None
                 self._turn_elapsed = 0.0
                 self._turn_release_scans = 0
+                self._turn_entry_scans = 0
+                if straight_exit:
+                    self._turn_exit_guard = 0.2
+                    self._handle = 0.0
+
+        if not self._turn and self._turn_exit_guard > 0 and raw[0] > p["turn_release"]:
+            self._turn_exit_guard = max(0.0, self._turn_exit_guard - step)
+            demand = 0.0
 
         if self._turn:
             demand = (
@@ -786,14 +834,15 @@ class SmoothDriveController(_ForwardDriveController):
         self._closest_diagonal = 500.0
         self._clear_mode = "clear"
         self._escape_clear_scans = 0
+        self._recovery_origin = "front"
+        self._recovery_observation_index = None
+        self._observation_release = 25.0
+        self._front_fault_history = []
 
     def _near(self, raw):
-        right_min = min(raw[2], raw[4])
-        left_min = min(raw[1], raw[3])
         trigger = self.params["reverse_trigger_cm"]
         return (raw[0] < trigger
-                or (raw[2] < trigger and right_min <= left_min)
-                or (raw[1] < trigger and right_min > left_min)
+                or min(raw[1:3]) < trigger
                 or min(raw[3:]) < 8)
 
     def update(self, Fr, FrLh, FrRh, RrLh, RrRh, dt):
@@ -808,6 +857,8 @@ class SmoothDriveController(_ForwardDriveController):
             self._clear_history = []
             self._clear_scans = 0
             self._forward_seconds = 0.0
+            _ForwardDriveController.__init__(self)
+            self._startup_elapsed = 1.0
             return self._recovery_stop("測距・周期異常：停止")
 
         if self._recovery_phase == "blocked":
@@ -825,7 +876,7 @@ class SmoothDriveController(_ForwardDriveController):
             released = (not self._near(raw)
                         and raw[0] >= self.params["recovery_front_release_cm"]
                         and min(raw[1:3]) >= 18 and min(raw[3:]) >= 12
-                        and self._side_release <= side < 300)
+                        and self._observation_release <= raw[self._recovery_observation_index] < 300)
             opposite = raw[3 if self._recovery_side_index == 4 else 4]
             # 壁に並行して近い時、後退旋回だけを続けると車体後部が壁へ寄る。
             # 実測の改善を確認できれば、低速の離脱操舵で横方向の余裕を作る。
@@ -840,7 +891,8 @@ class SmoothDriveController(_ForwardDriveController):
                 self._clear_mode = mode
                 self._confirmation_elapsed += elapsed
                 count = self.params["recovery_clear_scans"]
-                self._clear_history = (self._clear_history + [side])[-count:]
+                observation = raw[self._recovery_observation_index] if released else side
+                self._clear_history = (self._clear_history + [observation])[-count:]
                 self._clear_scans = len(self._clear_history)
                 stable = max(self._clear_history) - min(self._clear_history) <= 10
                 if self._clear_scans < count or not stable:
@@ -862,10 +914,12 @@ class SmoothDriveController(_ForwardDriveController):
             diagonal = raw[2 if self._recovery_side_index == 4 else 1]
             opposite = raw[3 if self._recovery_side_index == 4 else 4]
             probe = self._clear_mode == "side_probe"
+            observation = raw[self._recovery_observation_index]
+            observation_min = self.params["reverse_trigger_cm"] if self._recovery_origin == "diagonal" else self._observation_release - 3
             unsafe = (raw[0] < self.params["recovery_front_release_cm"]
-                      or side >= 300 or opposite < 12
+                      or (side >= 300 and self._recovery_origin == "side") or opposite < 12
                       or (probe and (side < 6 or diagonal < 12))
-                      or (not probe and (self._near(raw) or side < self._side_release - 3)))
+                      or (not probe and (self._near(raw) or observation < observation_min)))
             if unsafe:
                 self._recovery_phase = "reverse"
                 return self._reverse_step(raw)
@@ -881,7 +935,12 @@ class SmoothDriveController(_ForwardDriveController):
             self._recovery_debug(raw)
             self.debug.update(p=handle, pp_applied=False, safety_reason="",
                               recovery_escape_elapsed=self._escape_seconds)
-            self._escape_clear_scans = self._escape_clear_scans + 1 if side >= self._side_release and not self._near(raw) else 0
+            real_clear = self._observation_release <= observation < 300
+            # 斜めの壁が射線から外れた場合は、直前の斜め実測確認に加え
+            # 現在の側面実測でも余裕を確認する。340cm単独では解除しない。
+            passed_diagonal = (self._recovery_origin == "diagonal" and observation >= 300
+                               and self._side_release <= side < 300)
+            self._escape_clear_scans = self._escape_clear_scans + 1 if (real_clear or passed_diagonal) and not self._near(raw) else 0
             if self._escape_seconds >= self.params["recovery_escape_seconds"] and self._escape_clear_scans >= 3:
                 self._recovery_phase = "drive"
             elif self._escape_seconds >= self.params["recovery_probe_seconds"]:
@@ -890,7 +949,7 @@ class SmoothDriveController(_ForwardDriveController):
             return self.params["recovery_escape_accel"], handle, "後退復帰：接触側から低速離脱"
 
         accel, handle, comment = super().update(*raw, elapsed)
-        if accel == 0 and self.debug.get("safety_reason") == "車幅余裕のある進路候補なし：停止":
+        if accel == 0 and self.debug.get("safety_reason") in ("車幅余裕のある進路候補なし：停止", "正面接近：旋回方向の根拠不足"):
             return self._begin_recovery(raw)
         if accel > 0:
             self._forward_seconds += elapsed
@@ -908,9 +967,22 @@ class SmoothDriveController(_ForwardDriveController):
     def _begin_recovery(self, raw):
         if not self._reverse_handle:
             right_min, left_min = min(raw[2], raw[4]), min(raw[1], raw[3])
-            self._reverse_handle = -40.0 if right_min <= left_min else 40.0
+            if min(raw[3:]) < 8:
+                right = raw[4] <= raw[3]
+                origin = "side"
+            elif min(raw[1:3]) < self.params["reverse_trigger_cm"]:
+                right = raw[2] <= raw[1]
+                origin = "diagonal"
+            else:
+                right = right_min <= left_min
+                origin = "front"
+            self._reverse_handle = -40.0 if right else 40.0
             self._recovery_side_index = 4 if self._reverse_handle < 0 else 3
             self._side_release = self.params["recovery_side_release_cm"]
+            self._recovery_origin = origin
+            # 斜め前の壁は同じ斜めセンサーの改善で確認。遠い側面を待ち続けない。
+            self._recovery_observation_index = (2 if right else 1) if origin == "diagonal" else (0 if origin == "front" and raw[self._recovery_side_index] >= 300 else self._recovery_side_index)
+            self._observation_release = 35.0 if self._recovery_observation_index < 3 else self._side_release
             self._side_contact = raw[self._recovery_side_index] < 25
             self._closest_side = raw[self._recovery_side_index]
             self._closest_diagonal = raw[2 if self._recovery_side_index == 4 else 1]
@@ -933,6 +1005,9 @@ class SmoothDriveController(_ForwardDriveController):
                           recovery_confirm_elapsed=self._confirmation_elapsed,
                           recovery_direction_locked=bool(self._reverse_handle))
         self.debug.update(recovery_clear_mode=self._clear_mode,
+                          recovery_origin=self._recovery_origin,
+                          recovery_observation_index=self._recovery_observation_index,
+                          recovery_observation_release_cm=self._observation_release,
                           recovery_closest_side_cm=self._closest_side,
                           recovery_closest_diagonal_cm=self._closest_diagonal)
         if raw is not None:
@@ -953,6 +1028,13 @@ class SmoothDriveController(_ForwardDriveController):
         self._confirmation_elapsed = 0.0
         self._clear_history = []
         self._clear_scans = 0
+        if raw[0] < 3:
+            self._front_fault_history = (self._front_fault_history + [raw[0]])[-8:]
+            if self._recovery_pulses >= 8 and len(self._front_fault_history) == 8 and max(self._front_fault_history) - min(self._front_fault_history) < 1:
+                self._recovery_phase = "blocked"
+                return self._recovery_stop("正面の極小値が固定：測距・移動状態を確認")
+        else:
+            self._front_fault_history = []
         if self._recovery_pulses >= self.MAX_RECOVERY_PULSES:
             self._recovery_phase = "blocked"
             return self._recovery_stop("後退{}回で復帰余裕なし：手動確認".format(self.MAX_RECOVERY_PULSES))
@@ -1031,6 +1113,7 @@ def main():
     run_started = None
 
     try:
+        print('実行プログラム: {} ({})'.format(PROGRAM_VERSION, os.path.basename(__file__)))
         # GPIO/PWM設定を変えず、停止したまま3回の測距の中央値を表示する。
         startup_scans = []
         for _ in range(3):
@@ -1058,6 +1141,8 @@ def main():
             log_file.flush()
             with open(__file__, 'rb') as program_file:
                 program_sha256 = hashlib.sha256(program_file.read()).hexdigest()
+            log_file.write('プログラム: {} / {} / SHA256={}\n'.format(
+                PROGRAM_VERSION, os.path.basename(__file__), program_sha256))
             start_record = {
                 'type': 'start',
                 'schema_version': 1,
@@ -1065,6 +1150,7 @@ def main():
                 'started_at': started_at.isoformat(timespec='milliseconds'),
                 'program_path': os.path.abspath(__file__),
                 'program_sha256': program_sha256,
+                'program_version': PROGRAM_VERSION,
                 'sensor_order': ['Fr', 'FrLh', 'FrRh', 'RrLh', 'RrRh'],
                 'sensor_pins': {
                     'Fr': {'trig': 15, 'echo': 33},
