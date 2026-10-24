@@ -756,6 +756,9 @@ _ForwardDriveController = SmoothDriveController
 class SmoothDriveController(_ForwardDriveController):
     """近接時に短く後退し、余裕を確認して前進へ復帰する。"""
 
+    PARAMS = dict(_ForwardDriveController.PARAMS,
+                  reverse_trigger_cm=25.0,
+                  recovery_front_release_cm=35.0)
     MAX_RECOVERY_PULSES = 60
 
     def __init__(self):
@@ -791,15 +794,17 @@ class SmoothDriveController(_ForwardDriveController):
 
         right_min = min(raw[2], raw[4])
         left_min = min(raw[1], raw[3])
+        trigger = self.params["reverse_trigger_cm"]
+        release_front = self.params["recovery_front_release_cm"]
         near = (
-            raw[0] < 35
-            or (raw[2] < 35 and right_min <= left_min)
-            or (raw[1] < 35 and right_min > left_min)
+            raw[0] < trigger
+            or (raw[2] < trigger and right_min <= left_min)
+            or (raw[1] < trigger and right_min > left_min)
             or min(raw[3:]) < 8
         )
         released = (
             not near
-            and raw[0] >= 45
+            and raw[0] >= release_front
             and min(raw[1:3]) >= 18
             and min(raw[3:]) >= 12
         )
@@ -843,7 +848,7 @@ class SmoothDriveController(_ForwardDriveController):
             if self._resume_guard > 0:
                 escape_handle = -self._reverse_handle / 2
                 escape_range = raw[2] if escape_handle < 0 else raw[1]
-                if escape_range > 35 and raw[0] >= 45:
+                if escape_range > trigger and raw[0] >= release_front:
                     handle = escape_handle
                     self._handle = handle
                     comment = "後退復帰：接近側を避けて前進"
