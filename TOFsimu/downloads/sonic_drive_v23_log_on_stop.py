@@ -754,11 +754,18 @@ _ForwardDriveController = SmoothDriveController
 
 
 class SmoothDriveController(_ForwardDriveController):
-    """近接時に短く後退し、余裕を確認して前進へ復帰する。"""
+    """後退方向を保ち、接触側の実測余裕を確認して低速で離脱する。"""
 
     PARAMS = dict(_ForwardDriveController.PARAMS,
                   reverse_trigger_cm=25.0,
-                  recovery_front_release_cm=35.0)
+                  recovery_front_release_cm=35.0,
+                  recovery_side_release_cm=25.0,
+                  recovery_clear_scans=3,
+                  recovery_confirm_timeout_s=0.8,
+                  recovery_min_pulses=3,
+                  recovery_escape_seconds=0.5,
+                  recovery_probe_seconds=2.0,
+                  recovery_escape_accel=25.0)
     MAX_RECOVERY_PULSES = 60
 
     def __init__(self):
@@ -766,160 +773,197 @@ class SmoothDriveController(_ForwardDriveController):
         self._recovery_pulses = 0
         self._recovery_wait = False
         self._clear_scans = 0
+        self._clear_history = []
+        self._confirmation_elapsed = 0.0
         self._forward_seconds = 0.0
         self._reverse_handle = 0.0
-        self._resume_guard = 0.0
+        self._recovery_side_index = None
+        self._side_release = 25.0
+        self._recovery_phase = "drive"
+        self._escape_seconds = 0.0
+        self._side_contact = False
+        self._closest_side = 500.0
+        self._closest_diagonal = 500.0
+        self._clear_mode = "clear"
+        self._escape_clear_scans = 0
 
-    def update(self, Fr, FrLh, FrRh, RrLh, RrRh, dt):
-        try:
-            raw = tuple(
-                float(v) for v in (Fr, FrLh, FrRh, RrLh, RrRh)
-            )
-            elapsed = float(dt)
-            valid = (
-                all(math.isfinite(v) and 0 < v <= 500 for v in raw)
-                and math.isfinite(elapsed)
-                and 0 < elapsed <= 0.5
-            )
-        except (ValueError, TypeError, OverflowError):
-            valid = False
-
-        # 測距・周期異常では後退しない。
-        if not valid:
-            self._forward_seconds = 0.0
-            self._clear_scans = 0
-            return super().update(
-                Fr, FrLh, FrRh, RrLh, RrRh, dt
-            )
-
+    def _near(self, raw):
         right_min = min(raw[2], raw[4])
         left_min = min(raw[1], raw[3])
         trigger = self.params["reverse_trigger_cm"]
-        release_front = self.params["recovery_front_release_cm"]
-        near = (
-            raw[0] < trigger
-            or (raw[2] < trigger and right_min <= left_min)
-            or (raw[1] < trigger and right_min > left_min)
-            or min(raw[3:]) < 8
-        )
-        released = (
-            not near
-            and raw[0] >= release_front
-            and min(raw[1:3]) >= 18
-            and min(raw[3:]) >= 12
-        )
+        return (raw[0] < trigger
+                or (raw[2] < trigger and right_min <= left_min)
+                or (raw[1] < trigger and right_min > left_min)
+                or min(raw[3:]) < 8)
 
-        # mainでの後退・ニュートラル終了後、一度停止して確認。
-        if self._recovery_wait:
-            self._recovery_wait = False
+    def update(self, Fr, FrLh, FrRh, RrLh, RrRh, dt):
+        try:
+            raw = tuple(float(v) for v in (Fr, FrLh, FrRh, RrLh, RrRh))
+            elapsed = float(dt)
+            valid = (all(math.isfinite(v) and 0 < v <= 500 for v in raw)
+                     and math.isfinite(elapsed) and 0 < elapsed <= 0.5)
+        except (ValueError, TypeError, OverflowError):
+            valid = False
+        if not valid:
+            self._clear_history = []
             self._clear_scans = 0
-            return self._recovery_stop(
-                "後退後：停止して再測距"
-            )
+            self._forward_seconds = 0.0
+            return self._recovery_stop("測距・周期異常：停止")
 
-        if self._recovery_pulses:
-            self._clear_scans = (
-                self._clear_scans + 1 if released else 0
-            )
-
-            if self._clear_scans == 1:
-                return self._recovery_stop(
-                    "復帰余裕を再確認"
-                )
-
-            if self._clear_scans < 2:
+        if self._recovery_phase == "blocked":
+            return self._recovery_stop("後退上限：手動確認")
+        if self._recovery_phase == "reverse":
+            side = raw[self._recovery_side_index]
+            diagonal = raw[2 if self._recovery_side_index == 4 else 1]
+            self._closest_side = min(self._closest_side, side)
+            self._closest_diagonal = min(self._closest_diagonal, diagonal)
+            self._side_contact = self._side_contact or side < 12
+            if self._recovery_wait:
+                self._recovery_wait = False
+                return self._recovery_stop("後退後：舵を保って停止・再測距", hold=True)
+            # 340cm付近への跳躍を「接触側が離れた」証拠にしない。
+            released = (not self._near(raw)
+                        and raw[0] >= self.params["recovery_front_release_cm"]
+                        and min(raw[1:3]) >= 18 and min(raw[3:]) >= 12
+                        and self._side_release <= side < 300)
+            opposite = raw[3 if self._recovery_side_index == 4 else 4]
+            # 壁に並行して近い時、後退旋回だけを続けると車体後部が壁へ寄る。
+            # 実測の改善を確認できれば、低速の離脱操舵で横方向の余裕を作る。
+            improved = (side >= self._closest_side + 2
+                        or (diagonal < 300 and diagonal >= self._closest_diagonal + 2))
+            probe = (self._side_contact and improved and raw[0] >= self.params["recovery_front_release_cm"]
+                     and 6 <= side < 300 and diagonal >= 12 and opposite >= 25)
+            if (released or probe) and self._recovery_pulses >= self.params["recovery_min_pulses"]:
+                mode = "clear" if released else "side_probe"
+                if mode != self._clear_mode:
+                    self._clear_history = []
+                self._clear_mode = mode
+                self._confirmation_elapsed += elapsed
+                count = self.params["recovery_clear_scans"]
+                self._clear_history = (self._clear_history + [side])[-count:]
+                self._clear_scans = len(self._clear_history)
+                stable = max(self._clear_history) - min(self._clear_history) <= 10
+                if self._clear_scans < count or not stable:
+                    if self._confirmation_elapsed >= self.params["recovery_confirm_timeout_s"]:
+                        return self._reverse_step(raw)
+                    return self._recovery_stop("接触側の実測余裕を連続確認", hold=True)
+                self._recovery_phase = "escape"
+                self._escape_seconds = 0.0
+                self._escape_clear_scans = 0
+            else:
+                self._clear_history = []
+                self._clear_scans = 0
                 return self._reverse_step(raw)
 
-        if near:
-            return self._reverse_step(raw)
+        if self._near(raw) and self._recovery_phase != "escape":
+            return self._begin_recovery(raw)
+        if self._recovery_phase == "escape":
+            side = raw[self._recovery_side_index]
+            diagonal = raw[2 if self._recovery_side_index == 4 else 1]
+            opposite = raw[3 if self._recovery_side_index == 4 else 4]
+            probe = self._clear_mode == "side_probe"
+            unsafe = (raw[0] < self.params["recovery_front_release_cm"]
+                      or side >= 300 or opposite < 12
+                      or (probe and (side < 6 or diagonal < 12))
+                      or (not probe and (self._near(raw) or side < self._side_release - 3)))
+            if unsafe:
+                self._recovery_phase = "reverse"
+                return self._reverse_step(raw)
+            # 復帰直後は通常の壁追従へ戻さず、近かった側から低速で離れる。
+            handle = -self._reverse_handle / 2
+            escape_ray = raw[2] if handle < 0 else raw[1]
+            escape_side = raw[4] if handle < 0 else raw[3]
+            if escape_ray <= self.params["reverse_trigger_cm"] or escape_side < 25:
+                handle = 0.0
+            self._handle = handle
+            self._escape_seconds += elapsed
+            self._forward_seconds += elapsed
+            self._recovery_debug(raw)
+            self.debug.update(p=handle, pp_applied=False, safety_reason="",
+                              recovery_escape_elapsed=self._escape_seconds)
+            self._escape_clear_scans = self._escape_clear_scans + 1 if side >= self._side_release and not self._near(raw) else 0
+            if self._escape_seconds >= self.params["recovery_escape_seconds"] and self._escape_clear_scans >= 3:
+                self._recovery_phase = "drive"
+            elif self._escape_seconds >= self.params["recovery_probe_seconds"]:
+                self._recovery_phase = "reverse"
+                return self._reverse_step(raw)
+            return self.params["recovery_escape_accel"], handle, "後退復帰：接触側から低速離脱"
 
         accel, handle, comment = super().update(*raw, elapsed)
-
-        # 前進候補がなく停止した場合にも後退復帰を試す。
-        if (
-            accel == 0
-            and self.debug.get("safety_reason")
-            == "車幅余裕のある進路候補なし：停止"
-        ):
-            return self._reverse_step(raw)
-
+        if accel == 0 and self.debug.get("safety_reason") == "車幅余裕のある進路候補なし：停止":
+            return self._begin_recovery(raw)
         if accel > 0:
-            # 後退から戻った直後に、同じ近接箇所へ切り込み直さない。
-            if self._resume_guard > 0:
-                escape_handle = -self._reverse_handle / 2
-                escape_range = raw[2] if escape_handle < 0 else raw[1]
-                if escape_range > trigger and raw[0] >= release_front:
-                    handle = escape_handle
-                    self._handle = handle
-                    comment = "後退復帰：接近側を避けて前進"
-                self._resume_guard = max(0.0, self._resume_guard - elapsed)
-                self.debug.update(recovery_forward_guard=self._resume_guard,
-                                  recovery_escape_handle=handle)
             self._forward_seconds += elapsed
-
-            # 前進が1秒続いたら後退回数をリセット。
             if self._forward_seconds >= 1.0:
                 self._recovery_pulses = 0
+                self._reverse_handle = 0.0
+                self._recovery_side_index = None
                 self._clear_scans = 0
+                self._clear_history = []
         else:
             self._forward_seconds = 0.0
-
+        self._recovery_debug(raw)
         return accel, handle, comment
 
-    def _recovery_stop(self, reason):
-        self._handle = 0.0
+    def _begin_recovery(self, raw):
+        if not self._reverse_handle:
+            right_min, left_min = min(raw[2], raw[4]), min(raw[1], raw[3])
+            self._reverse_handle = -40.0 if right_min <= left_min else 40.0
+            self._recovery_side_index = 4 if self._reverse_handle < 0 else 3
+            self._side_release = self.params["recovery_side_release_cm"]
+            self._side_contact = raw[self._recovery_side_index] < 25
+            self._closest_side = raw[self._recovery_side_index]
+            self._closest_diagonal = raw[2 if self._recovery_side_index == 4 else 1]
+        # 前進の壁追従履歴は後退開始時だけ破棄し、後退の舵は途中で変えない。
+        _ForwardDriveController.__init__(self)
+        self._startup_elapsed = 1.0
+        self._recovery_phase = "reverse"
+        self._forward_seconds = 0.0
+        self._clear_history = []
+        self._clear_scans = 0
+        return self._reverse_step(raw)
+
+    def _recovery_debug(self, raw=None):
+        self.debug.update(recovery_phase=self._recovery_phase,
+                          recovery_side=("右" if self._reverse_handle < 0 else "左") if self._reverse_handle else "none",
+                          recovery_handle=self._reverse_handle,
+                          recovery_pulses=self._recovery_pulses,
+                          recovery_side_release_cm=self._side_release,
+                          recovery_clear_scans=self._clear_scans,
+                          recovery_confirm_elapsed=self._confirmation_elapsed,
+                          recovery_direction_locked=bool(self._reverse_handle))
+        self.debug.update(recovery_clear_mode=self._clear_mode,
+                          recovery_closest_side_cm=self._closest_side,
+                          recovery_closest_diagonal_cm=self._closest_diagonal)
+        if raw is not None:
+            self.debug.update(recovery_right_min_cm=min(raw[2],raw[4]),
+                              recovery_left_min_cm=min(raw[1],raw[3]),
+                              recovery_contact_side_cm=raw[self._recovery_side_index] if self._recovery_side_index is not None else None)
+
+    def _recovery_stop(self, reason, hold=False):
+        handle = self._reverse_handle if hold else 0.0
+        self._handle = handle
         self.gap_planner.reset()
-        self.debug.update(
-            safety_reason=reason,
-            pp_applied=False,
-        )
-        return 0.0, 0.0, reason
+        self._recovery_debug()
+        self.debug.update(safety_reason=reason, pp_applied=False)
+        return 0.0, handle, reason
 
     def _reverse_step(self, raw):
         self._forward_seconds = 0.0
+        self._confirmation_elapsed = 0.0
+        self._clear_history = []
         self._clear_scans = 0
-
         if self._recovery_pulses >= self.MAX_RECOVERY_PULSES:
-            return self._recovery_stop(
-                "後退{}回で復帰余裕なし：手動確認".format(self.MAX_RECOVERY_PULSES)
-            )
-
-        # 提示された右後退/左後退を、排他的な分岐で適用する。
-        # 正面だけが近い時にも左右の最短距離で決める（同距離は右）。
-        right_min = min(raw[2], raw[4])
-        left_min = min(raw[1], raw[3])
-        if right_min <= left_min:
-            handle = -40.0
-            side = "右"
-        else:
-            handle = 40.0
-            side = "左"
-
-        # 前進用のフィルタ・旋回・壁端履歴を破棄。
-        _ForwardDriveController.__init__(self)
-
+            self._recovery_phase = "blocked"
+            return self._recovery_stop("後退{}回で復帰余裕なし：手動確認".format(self.MAX_RECOVERY_PULSES))
         self._recovery_pulses += 1
         self._recovery_wait = True
-        self._reverse_handle = handle
-        self._resume_guard = 0.25
-
-        reason = "後退の{}旋回：短く後退 {}/{}".format(
-            side,
-            self._recovery_pulses,
-            self.MAX_RECOVERY_PULSES,
-        )
-        self.debug.update(
-            safety_reason=reason,
-            pp_applied=False,
-            recovery_side=side,
-            recovery_right_min_cm=right_min,
-            recovery_left_min_cm=left_min,
-            recovery_handle=handle,
-            recovery_pulses=self._recovery_pulses,
-        )
-
-        # mainの既存ESC後退手順を使用。
-        return -50.0, handle, reason
+        self._handle = self._reverse_handle
+        self._recovery_debug(raw)
+        reason = "後退の{}旋回：舵を保ち短く後退 {}/{}".format(
+            "右" if self._reverse_handle < 0 else "左", self._recovery_pulses, self.MAX_RECOVERY_PULSES)
+        self.debug.update(safety_reason=reason, pp_applied=False)
+        return -50.0, self._reverse_handle, reason
 
 
 # 障害物センサ測定関数：元プログラムと同じ
